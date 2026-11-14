@@ -1,0 +1,1860 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IB Evaluation Live Interpreter &amp; Co-Pilot</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif;
+      background-color: #f1f5f9;
+      color: #0f172a;
+      overflow-x: hidden;
+    }
+    .pulse-ring-ko {
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55);
+      animation: pulseKo 1.6s infinite;
+    }
+    .pulse-ring-en {
+      box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.55);
+      animation: pulseEn 1.6s infinite;
+    }
+    @keyframes pulseKo {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+      70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+    @keyframes pulseEn {
+      0% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.5); }
+      70% { box-shadow: 0 0 0 10px rgba(79, 70, 229, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0); }
+    }
+    .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    .custom-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Password Protection Gate Overlay -->
+  <div id="authLockOverlay" class="fixed inset-0 z-[100] bg-slate-950 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 sm:p-7 shadow-2xl text-white space-y-5">
+      <div class="flex items-center gap-3">
+        <div class="w-11 h-11 rounded-xl bg-teal-500/20 border border-teal-400/40 flex items-center justify-center text-teal-300 font-extrabold text-sm">
+          IB
+        </div>
+        <div>
+          <span class="text-[11px] font-bold uppercase tracking-wider text-teal-400">Confidential Evaluation Tool</span>
+          <h2 class="text-lg font-bold text-white leading-snug">실시간 통역 &amp; PL 코파일럿 잠금</h2>
+        </div>
+      </div>
+
+      <p class="text-xs text-slate-400 leading-relaxed">
+        본 웹앱에는 IB 프로그램 평가 방문 대외비 자료가 암호화되어 보관되어 있습니다. 접속 비밀번호를 입력하면 브라우저 메모리에서 복호화됩니다.
+      </p>
+
+      <form id="authUnlockForm" class="space-y-3.5">
+        <div>
+          <label for="authPasswordInput" class="block text-xs font-semibold text-slate-300 mb-1.5">접속 비밀번호 (Password)</label>
+          <div class="relative flex items-center">
+            <input id="authPasswordInput" type="password" autocomplete="current-password" placeholder="비밀번호를 입력하세요" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 pr-16 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-400">
+            <button id="btnTogglePwVis" type="button" class="absolute right-2.5 px-2 py-1 rounded text-[11px] font-semibold text-slate-400 hover:text-white">표시</button>
+          </div>
+          <p id="authErrorMsg" class="hidden text-xs font-semibold text-rose-400 mt-1.5">비밀번호가 일치하지 않습니다. 다시 확인해 주세요.</p>
+        </div>
+
+        <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+          <input id="authRememberSession" type="checkbox" checked class="rounded border-slate-600 bg-slate-800 text-teal-500 focus:ring-teal-500">
+          <span>현재 브라우저 탭을 닫을 때까지 잠금 해제 유지 (새로고침 시 자동 복구)</span>
+        </label>
+
+        <button id="btnSubmitUnlock" type="submit" class="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-sm font-bold shadow-lg transition">
+          잠금 해제 및 시작하기
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Top Command Header -->
+  <header class="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30 shadow-md">
+    <div class="max-w-[1600px] mx-auto px-3 sm:px-5 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
+      <!-- Brand & Session Selector -->
+      <div class="flex flex-wrap items-center gap-2.5 min-w-0 flex-1">
+        <div class="flex items-center gap-2 shrink-0">
+          <span id="brandCodeBadge" class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-teal-500/20 border border-teal-400/40 text-teal-300 font-bold text-xs">IB</span>
+          <div class="leading-tight">
+            <h1 id="brandTitleText" class="text-sm sm:text-base font-bold tracking-tight text-white">IB Evaluation Live Interpreter &amp; Co-Pilot</h1>
+            <p id="brandSubText" class="text-[11px] text-slate-400 hidden sm:block">Authorized Evaluation Team Access Only</p>
+          </div>
+        </div>
+
+        <div class="h-6 w-px bg-slate-700 hidden md:block"></div>
+
+        <!-- Session Dropdown -->
+        <div class="flex items-center gap-1.5 min-w-[220px] max-w-full flex-1 sm:flex-initial">
+          <label for="sessionSelect" class="sr-only">미팅 세션 선택</label>
+          <select id="sessionSelect" class="w-full sm:w-[330px] bg-slate-800 hover:bg-slate-750 text-white text-xs sm:text-sm font-medium rounded-lg border border-slate-600 px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-400">
+          </select>
+        </div>
+      </div>
+
+      <!-- Audio Recorder & Tools -->
+      <div class="flex items-center gap-2 flex-wrap">
+        <!-- Per-Meeting Recorder Widget -->
+        <div class="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1">
+          <span id="recDot" class="w-2.5 h-2.5 rounded-full bg-slate-500 transition-colors"></span>
+          <span id="recTimer" class="font-mono text-xs font-semibold text-slate-200 w-12 text-center">00:00</span>
+          <canvas id="audioMeterCanvas" width="54" height="18" class="rounded bg-slate-900 hidden sm:block"></canvas>
+          <button id="btnRecToggle" type="button" class="px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white transition flex items-center gap-1">
+            <span id="recBtnLabel">미팅 녹음</span>
+          </button>
+          <button id="btnRecPause" type="button" class="hidden px-2 py-1 rounded-md text-xs font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 transition">
+            일시정지
+          </button>
+        </div>
+
+        <!-- Vault Badge Button -->
+        <button id="btnOpenVault" type="button" class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 flex items-center gap-1.5 transition">
+          <span>녹음·북마크</span>
+          <span id="vaultCountBadge" class="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-teal-500/20 text-teal-300">0</span>
+        </button>
+
+        <!-- Lock Screen Button -->
+        <button id="btnLockApp" type="button" class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-rose-900/60 border border-slate-700 text-slate-200 transition" title="화면 잠금">
+          잠금
+        </button>
+
+        <!-- AI Settings Button -->
+        <button id="btnOpenSettings" type="button" class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 flex items-center gap-1.5 transition">
+          <span id="engineBadgeDot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span id="engineBadgeText" class="hidden md:inline">하이브리드 코파일럿</span>
+          <span class="md:hidden">설정</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Active Session Context Sub-bar -->
+    <div class="bg-slate-800/90 border-t border-slate-700/80 px-3 sm:px-5 py-1.5 text-xs text-slate-300">
+      <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-2">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span id="sessionMetaLocation" class="font-semibold text-teal-300"></span>
+          <span class="text-slate-500">|</span>
+          <span id="sessionMetaParticipants" class="text-slate-300"></span>
+          <span class="text-slate-500 hidden sm:inline">|</span>
+          <span id="sessionMetaPsp" class="px-2 py-0.5 rounded bg-slate-700 text-amber-300 font-mono text-[11px]"></span>
+        </div>
+        <div class="flex items-center gap-2 text-[11px] text-slate-400">
+          <span>단축키: <kbd class="px-1.5 py-0.5 bg-slate-700 rounded text-slate-200">Alt+1</kbd> 한국어 듣기</span>
+          <span><kbd class="px-1.5 py-0.5 bg-slate-700 rounded text-slate-200">Alt+2</kbd> Orin 영어 듣기</span>
+          <span><kbd class="px-1.5 py-0.5 bg-slate-700 rounded text-slate-200">Alt+S</kbd> 대기</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Responsive Split Workspace -->
+  <main class="flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+
+    <!-- LEFT PANEL (7 cols on lg): Live Dual-Channel Speech & Transcript -->
+    <section class="lg:col-span-6 xl:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[calc(100vh-145px)] min-h-[560px]">
+      <!-- Speaker Controls Header -->
+      <div class="p-3 border-b border-slate-200 bg-slate-50/80 rounded-t-xl space-y-2.5">
+        <div class="grid grid-cols-2 gap-2.5">
+          <!-- Korean Speaker Button -->
+          <button id="btnListenKo" type="button" class="group relative flex items-center justify-between p-3 rounded-xl border-2 border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100/80 text-left transition-all">
+            <div>
+              <div class="flex items-center gap-1.5">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" id="dotKo"></span>
+                <span class="text-xs font-bold uppercase tracking-wider text-emerald-800">표선고 한국어 듣기 (KR)</span>
+              </div>
+              <p class="text-[11px] text-emerald-700 mt-0.5">교사·학생·학부모 발화 &rarr; 영문 통역 추천</p>
+            </div>
+            <span id="statusPillKo" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-emerald-700 border border-emerald-200">대기</span>
+          </button>
+
+          <!-- Orin English Button -->
+          <button id="btnListenEn" type="button" class="group relative flex items-center justify-between p-3 rounded-xl border-2 border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100/80 text-left transition-all">
+            <div>
+              <div class="flex items-center gap-1.5">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-indigo-600" id="dotEn"></span>
+                <span class="text-xs font-bold uppercase tracking-wider text-indigo-900">Orin 영어 듣기 (EN)</span>
+              </div>
+              <p class="text-[11px] text-indigo-700 mt-0.5">EL 질문·코멘트 &rarr; 완곡한 한국어 통역 추천</p>
+            </div>
+            <span id="statusPillEn" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-indigo-700 border border-indigo-200">대기</span>
+          </button>
+        </div>
+
+        <!-- Secondary Control Row: Stop STT, Demo Chips, Clear -->
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <button id="btnStopStt" type="button" class="px-2.5 py-1 rounded-md text-xs font-medium bg-slate-200 hover:bg-slate-300 text-slate-700 transition">
+              음성인식 일시중지
+            </button>
+            <span class="text-[11px] text-slate-400 hidden sm:inline">| 시연 테스트:</span>
+            <button type="button" data-sim="ko-env" class="sim-chip px-2 py-1 rounded-md text-[11px] font-medium bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition">
+              + 교사 발화(PLC·8년유임)
+            </button>
+            <button type="button" data-sim="en-orin" class="sim-chip px-2 py-1 rounded-md text-[11px] font-medium bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 transition">
+              + Orin 질문(AI·PDP)
+            </button>
+            <button type="button" data-sim="ko-doc" class="sim-chip px-2 py-1 rounded-md text-[11px] font-medium bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition">
+              + DPC 발화(국어A·예산)
+            </button>
+          </div>
+          <span id="sttNoticeText" class="text-[11px] text-slate-500">마이크 클릭 또는 하단 입력창 사용</span>
+        </div>
+      </div>
+
+      <!-- Live Streaming Interim Speech Box -->
+      <div id="interimBanner" class="hidden px-3.5 py-2.5 bg-slate-900 text-white border-b border-slate-800">
+        <div class="flex items-center justify-between text-[11px] text-teal-300 font-semibold mb-0.5">
+          <span id="interimSpeakerLabel">실시간 음성 인식 중...</span>
+          <span class="animate-pulse">LIVE STT</span>
+        </div>
+        <p id="interimTextDisplay" class="text-sm font-medium text-slate-100 leading-snug"></p>
+      </div>
+
+      <!-- Chronological Dialogue Feed -->
+      <div id="transcriptFeed" class="flex-1 overflow-y-auto p-3.5 space-y-3 custom-scroll">
+      </div>
+
+      <!-- Manual Quick Input / Stenography Bar -->
+      <div class="p-3 border-t border-slate-200 bg-slate-50 rounded-b-xl">
+        <form id="manualInputForm" class="flex items-center gap-2">
+          <select id="manualSpeakerSelect" aria-label="입력 화자 선택" class="bg-white border border-slate-300 rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-500">
+            <option value="KO">표선고 (한국어)</option>
+            <option value="EN">Orin (English)</option>
+          </select>
+          <input id="manualTextInput" type="text" placeholder="실시간 메모·키워드나 발화 내용을 입력 후 Enter를 누르면 즉시 통역 스크립트가 생성됩니다..." class="flex-1 min-w-0 bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+          <button id="btnSubmitManual" type="submit" class="px-3.5 py-2 rounded-lg bg-teal-700 hover:bg-teal-600 text-white text-xs sm:text-sm font-semibold shrink-0 transition">
+            통역 생성
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- RIGHT PANEL (6 cols on lg): Real-Time Interpreter Teleprompter & PL Advisor -->
+    <section class="lg:col-span-6 xl:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[calc(100vh-145px)] min-h-[560px]">
+      <!-- Right Panel Navigation Tabs -->
+      <div class="flex items-center justify-between px-3 pt-2.5 border-b border-slate-200 bg-slate-50/80 rounded-t-xl gap-2">
+        <div class="flex items-center gap-1 overflow-x-auto">
+          <button type="button" data-rtab="copilot" class="rtab-btn px-3 py-2 text-xs sm:text-sm font-bold border-b-2 border-teal-700 text-teal-800 whitespace-nowrap">
+            실시간 통역 프롬프터
+          </button>
+          <button type="button" data-rtab="questions" class="rtab-btn px-3 py-2 text-xs sm:text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-800 whitespace-nowrap">
+            세션 맞춤 질문·체크리스트
+          </button>
+          <button type="button" data-rtab="glossary" class="rtab-btn px-3 py-2 text-xs sm:text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-800 whitespace-nowrap">
+            표선고·IB 용어사전
+          </button>
+        </div>
+
+        <!-- Teleprompter Font Zoom -->
+        <div class="flex items-center gap-1 pb-1.5 shrink-0">
+          <button id="btnFontDown" type="button" title="글자 작게" class="px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-600">A-</button>
+          <button id="btnFontUp" type="button" title="글자 크게" class="px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-600">A+</button>
+        </div>
+      </div>
+
+      <!-- TAB 1: Real-Time Co-Pilot Teleprompter -->
+      <div id="rtab-copilot" class="flex-1 overflow-y-auto p-4 space-y-3.5 custom-scroll">
+        <!-- Direction Header Banner -->
+        <div id="copilotDirectionBanner" class="rounded-xl p-3.5 bg-gradient-to-r from-teal-800 to-slate-800 text-white flex items-center justify-between gap-2">
+          <div>
+            <span id="copilotDirectionBadge" class="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-white/20 text-teal-100 mb-1">KR &rarr; EN FOR ORIN</span>
+            <h2 id="copilotDirectionTitle" class="text-sm sm:text-base font-bold">내가 지금 영어로 해줄 말 (Ready-to-Speak Script)</h2>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button id="btnSpeakScript" type="button" class="px-2.5 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-xs font-semibold text-white transition">
+              발음 듣기
+            </button>
+            <button id="btnCopyScript" type="button" class="px-2.5 py-1.5 rounded-lg bg-white text-slate-900 hover:bg-teal-50 text-xs font-bold transition">
+              스크립트 복사
+            </button>
+          </div>
+        </div>
+
+        <!-- Primary Ready-to-Speak Teleprompter Card -->
+        <div class="rounded-xl border-2 border-teal-600/30 bg-teal-50/40 p-4 shadow-sm">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-xs font-bold text-teal-900 uppercase tracking-wide">1. IB 공식 화법 통역 스크립트 (그대로 읽으세요)</span>
+            <span id="copilotEngineSource" class="text-[11px] font-medium text-teal-700">실시간 분석 대기</span>
+          </div>
+          <p id="copilotMainScript" class="text-base sm:text-lg font-semibold text-slate-900 leading-relaxed select-all">
+            좌측에서 [표선고 한국어 듣기] 또는 [Orin 영어 듣기]를 누르거나, 상단 시연 버튼(+ 교사 발화)을 눌러 보세요. 상대방의 발화가 감지되는 즉시 Orin에게 전달할 자연스러운 IB 영문 통역 스크립트가 이곳에 크게 표시됩니다.
+          </p>
+        </div>
+
+        <!-- 1-Sentence Urgent Summary Card -->
+        <div class="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-xs font-bold text-slate-700">2. 발화가 길 때 1문장 핵심 요약 통역 (Quick Gist)</span>
+            <button id="btnCopyGist" type="button" class="text-[11px] font-semibold text-teal-700 hover:underline">복사</button>
+          </div>
+          <p id="copilotGistScript" class="text-sm font-medium text-slate-800 leading-relaxed">
+            발화 핵심 요지가 1문장으로 압축되어 표시됩니다.
+          </p>
+        </div>
+
+        <!-- Detected Domain Terms Chips -->
+        <div class="rounded-xl border border-slate-200 bg-white p-3.5">
+          <div class="text-xs font-bold text-slate-700 mb-2">3. 방금 발화에서 감지된 표선고·IB 핵심 용어 (클릭 시 복사)</div>
+          <div id="copilotGlossaryChips" class="flex flex-wrap gap-1.5">
+            <span class="text-xs text-slate-400">감지된 전문 용어가 여기에 자동 매핑됩니다.</span>
+          </div>
+        </div>
+
+        <!-- Live Pyoseon Document Cross-Verification Alert -->
+        <div id="copilotEvidenceBox" class="rounded-xl border border-amber-300 bg-amber-50/70 p-3.5">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-xs font-bold text-amber-900">4. PL 실시간 표선고 제출서류 교차검증 알림 (Orin 보충 설명용)</span>
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-200/70 text-amber-900">Stage 1 &amp; 보완자료 연동</span>
+          </div>
+          <div id="copilotEvidenceList" class="space-y-2 text-xs text-amber-950 leading-relaxed">
+            <p>예산, 교원 연수(PD), 국어 A 작품 수, SL 시수, 실험실 안전, AI 학문적 진실성, PDP 설문 등이 언급되면 표선고 실제 제출 수치와 원본 드라이브 링크가 즉시 팝업됩니다.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: Session-Specific Preset Bilingual Questions & Checkpoints -->
+      <div id="rtab-questions" class="hidden flex-1 overflow-y-auto p-4 space-y-3 custom-scroll">
+        <div class="rounded-lg bg-slate-100 p-3 text-xs text-slate-700">
+          현재 선택된 세션에서 꼭 확인해야 할 <strong>핵심 점검 사항</strong>과 <strong>한·영 질문 카드</strong>입니다. <strong>[프롬프터에 띄우기]</strong>를 누르면 통역 화면에 크게 표시됩니다.
+        </div>
+        <div id="sessionChecklistBox" class="space-y-2"></div>
+        <div id="sessionPromptsList" class="space-y-3 pt-1"></div>
+      </div>
+
+      <!-- TAB 3: Searchable Pyoseon & IB Glossary -->
+      <div id="rtab-glossary" class="hidden flex-1 overflow-y-auto p-4 space-y-3 custom-scroll">
+        <input id="glossarySearchInput" type="text" placeholder="한국어 또는 영어 용어 검색 (예: 고교학점제, 유임, 생기부, 융합탐구, PG...)" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+        <div id="glossaryTableContainer" class="space-y-2"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL 1: Recordings & Bookmarked Evidence Vault -->
+  <div id="vaultModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-slate-200">
+      <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+        <div>
+          <h3 class="text-base font-bold text-slate-900">미팅별 녹음 파일 보관함 &amp; 보고서 증거 내보내기</h3>
+          <p class="text-xs text-slate-500 mt-0.5">세션별 음성 녹음본 재생·다운로드 및 Day 2 보고서 작성용 대화록(.md) 저장</p>
+        </div>
+        <button id="btnCloseVault" type="button" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700">닫기</button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-5 space-y-5 custom-scroll">
+        <!-- Export Buttons -->
+        <div class="flex flex-wrap items-center justify-between gap-2 bg-teal-50 border border-teal-200 rounded-xl p-3.5">
+          <div class="text-xs text-teal-900">
+            <strong>회의록 및 북마크 일괄 내보내기:</strong> 현재 세션 대화록 또는 전체 북마크(★) 증거를 마크다운 파일로 다운로드합니다.
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="btnExportSessionMd" type="button" class="px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-600 text-white text-xs font-semibold">현재 세션 대화록 (.md)</button>
+            <button id="btnExportAllBookmarksMd" type="button" class="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold">전체 ★ 증거팩 (.md)</button>
+          </div>
+        </div>
+
+        <!-- Audio Recordings List -->
+        <div>
+          <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">미팅별 음성 녹음 목록 (브라우저 메모리 보관 중 — 새로고침 전 다운로드 권장)</h4>
+          <div id="recordingsListContainer" class="space-y-2"></div>
+        </div>
+
+        <!-- Bookmarked Utterances List -->
+        <div>
+          <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">보고서 반영용 ★ 북마크 발화 모음</h4>
+          <div id="bookmarksListContainer" class="space-y-2"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 2: AI Co-Pilot & Speech Settings -->
+  <div id="settingsModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+        <h3 class="text-base font-bold text-slate-900">실시간 음성인식 &amp; Gemini AI 코파일럿 설정</h3>
+        <button id="btnCloseSettings" type="button" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700">닫기</button>
+      </div>
+      <div class="p-5 space-y-4 text-xs sm:text-sm">
+        <div>
+          <label for="inputGeminiKey" class="block font-bold text-slate-800 mb-1">선택사항: Gemini API 키 연동 (초정밀 맥락 통역 모드)</label>
+          <p class="text-xs text-slate-500 mb-2">키를 입력하지 않아도 기본 내장된 <strong>하이브리드 번역 + 표선고 IB 전문용어 엔진</strong>이 즉시 작동합니다. Google AI Studio API 키를 입력하면 <code>gemini-2.5-flash</code>가 표선고 맥락을 반영해 더욱 세련된 통역문을 생성합니다.</p>
+          <input id="inputGeminiKey" type="password" placeholder="AIzaSy... (브라우저 로컬에만 안전하게 저장됨)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500">
+        </div>
+
+        <div>
+          <label for="selectOrinAccent" class="block font-bold text-slate-800 mb-1">Orin Stephney 영어 음성인식 로케일</label>
+          <select id="selectOrinAccent" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs font-medium bg-white">
+            <option value="en-US">영어 (국제 표준 / en-US)</option>
+            <option value="en-IN">영어 (인도 소재 국제학교 억양 최적화 / en-IN)</option>
+            <option value="en-GB">영어 (영국식 / en-GB)</option>
+          </select>
+        </div>
+
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 space-y-1">
+          <div class="font-bold text-slate-800">현장 사용 꿀팁</div>
+          <p>1. 크롬(Chrome)이나 엣지(Edge) 브라우저에서 마이크 권한을 허용하면 실시간 음성인식과 미팅 녹음이 동시에 작동합니다.</p>
+          <p>2. [미팅 녹음]을 켜 둔 채로 [한국어 듣기]와 [Orin 영어 듣기]를 수시로 전환해도 녹음 파일은 끊기지 않고 한 파일로 깨끗하게 이어집니다.</p>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button id="btnClearApiKey" type="button" class="px-3 py-2 rounded-lg border border-slate-300 text-xs font-semibold text-slate-600 hover:bg-slate-100">키 초기화</button>
+          <button id="btnSaveSettings" type="button" class="px-4 py-2 rounded-lg bg-teal-700 hover:bg-teal-600 text-white text-xs font-bold">설정 저장</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toastBox" class="hidden fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-semibold shadow-lg border border-slate-700"></div>
+
+  <script>
+    // =========================================================================
+    // 1. GROUNDED PYOSEON HIGH SCHOOL (061983) SESSIONS, GLOSSARY & EVIDENCE DB
+    // =========================================================================
+    // Encrypted Confidential Evaluation Dataset (Unlocked via SHA-256 Keystream)
+    const AUTH_SALT = "pyoseon-ib-salt-2026";
+    const AUTH_VERIFY_HEX = "00b421600e5d4fc1616d4a9877cdbfba98d935c8753e16f032e000bd704adec9";
+    const ENCRYPTED_PAYLOAD_B64 = "vX/Ki7awbXXz/gY4TmV+aX5xDg2u0gRT7aRsFERK551LFFMj/PBCXBRVA9fbrG4nJOBxJY6Cn8QaDLSbbvKRwoj5Kom1JlPaCNkYVj19Tt5owIZI15c46vpD/9NxN9hfvAqRVSmlOmgEXmLu7q1N+g0qTY2wpL2SIFvOumcuyvwb150x3vQgj7HIQzH5Dd9ecZOSuSwtNoRRPpd1MN0kBq9gdR6QqgQswABSgt5V9AezsoyU7I2ofxPpnuiMDnt0L/v4dr/Ejkf1U156UI9y5TgRj1gnv+DaeCD9GvHhvw8ZUhusIbvyN4bYCBUuFPg0qpQzyjshWxlLEy7WqPgMdbFZtrXnFKUdEWdMtNxSFa/Ah7yiG5XNtwxl1cgwXlRUUIeV9QrCIM2Pop6mIZlrppZczWxw+pZ45VLjvFORLUEZELDgPGesLbxqX9j8peU7Fbpe4Zo1YkKHL0A9+lB2ZgPrL9pkugS9xk2+AkNP+Xz4CTOdG5GWS6VFMq/4ChtO4qCfkKbfv235BzzGA0taZyscdgHbqpNd2bqQB6ZOUc8i7R58Czi+nk6uhKLIkTSWEv/uBxFmhXd9rZLcXkw3/fpvCoFC1RRY7Nh3dNWBVYLtjsvqdEHh3tw64lLFSW7ZEguDxcjHvT3XiQMS4CgCkpjucHLy6wor/a/SLxn3WGUFfwlWWXDKNsjzkOEz8BX7RRA2t5ZuA80cHMdpLdhp2QdaRGNwamrOIZJVMhWyFrSFlXwk85sA0Rp62VopX3XpLjOwQYeuJMejasfhHoNgeXV2ff+pwv2ZknAI2/GPwH9wpZoNzbb73k/sXp0px02a+Gz9mayjWyT4Nr1rCE4cS9utu/1zUJx2yaKJLPjFu+MUBX+2gzjpMbeez3Oxe9NXvhUo4pBhp4aiDDWVxIHUOcKOi47kuO3zkBigBcJLFD0epRfyv9g61/F714cJB8IATU2isVVH6ZbyjgbVatnaMXLfuUR89iFOGIzPBkYb39Trc1sLzruXzt6ReNafyD2TZaStVYh7GvGu8WhMZ54VpXDXWS68Gn2F+KPSLdF4kYxUnijaP+vyARgOLu1VUT5bqXy8J5ug2LFly2of6Q1682Xe7B/XmX0VfUyBt82GcHvTYcH3m7QCVXfQSkpUPIpoNYHvtlvfEBdNOJXT/IG39m08+ejnK22CjmhY7nKFn0spe9k9r+phoSyLam2DQHdellS5WhaxWFTMJ6iyeSq3rl37K6iqgfrSpN+VgWOHOt5kkhRZ7d4fLaX1cvs6xrargo5MHGipnkV4cAkkHOJV0jPKfAc3/ef/yr41KPAsYrt/uCjtnUY9pveuvGDfws8OEMfeFM+B6bubAXe7m7MhOtUhHmlYDwU2ZCXcmwRCKQcloELVqZo80swxwJut2bUacXYNbKEipoIDphPtZMsV+ISgk3S9ygWaLggEHN4/DPJHg2Tz9suypv72FdYOY7G4N9y9PjiY5gUTuGMLIZJpbA51plKeachMXbFPCX0oT3DJWZzccV1BkAGpWWkl7yDCsg/e3vi1gvmv+XV1Sv89wPBSGq0TKltHhi6tz4Nz8oXT2EShBghAltO+ek9A12Do9wq+FMTun8zx9wXUG+rD1XHH56fptusDE2ZXCFbfNqiVE9pwSvoLKMjbgryBUdWAdPceO6uMrCUMoVgNZBnReO1kBAVHElLtD8Qw2W0lWHg3VLs4WU/TTe7MdEZwjlXpCT3+p2G/yHqvrlYJnG7tenHlyT/YHqOGQ7JJ7PfMk6GFL+P3yBEdH2AMvny3sxby/NKJicJmUDj+4joPVcIdXRU4d+ACjCdQM/XYHcqaQZPSsKIExn0SuH4Hd2/57hG2vQgdWJ5x5nQdukoiKWJ/AAah4DyhAoOIKDiJypT8dENIyjQ+qzO7agmgo7LEw6ilSiiILVz8Cf1G/jhHzAHOg5Ts5iaNLyDCihb6sJLMVbHgCuzOpksi8kY12bunaYqDQ0Nvo6COXB1uZViIryfH2cYZP650y2LmuabQSq3ZK/cpFywLkdU1EL2NaNavgCIrSOEUfLFXRkHofwoKyApOnGJWvJzSI1HsggJhMQrv7EFUjVgspOwNbIs2goMGO9/OtSQxq7wu/Cgwh17ZRuxk3eO30y7kahSo62zbyY7U3Zk/ZIemdQ06G0DLYbNqqQbm2YLeEJgAnEqPGw3cSbHMSwmh3it2QO8QwkAMWeKoOEPvYb7FZqnRS9rPDhCxeUwtJcHXmuaXUEMKiAEVWY0qPZEHu1I1svbfWKYEjyMXiljbCixQnJSPDR4PsbWTj7Fpbou0JXINyFK6m7L5bnrpbf3Pk6u0e5kzEJkvIYP+fRWdtXgTcjMzdcjwmqW24beqG0H1Dh4NzW7yD5FWYO3045u+KEYtTytGj8K4CLMvQ68tikqjBNDgYsGiRaKrOdwRtTxMDOrS2siHl7HJZSlb0FEtlDwxioOjPhNr038qdDpk0QFr14Ze3j+zE9+uxAgdotJTnlwXuIQs/awyE2PXT8Z3U9AYMqhI2zDKfADsNCKcU42Ociuk/xYBEfEN8eIa5WIJUcKhHzn82yDt0Cd8L5JEQgCQJL2yf9YSxE45lOrkSpgaDBgDJZh26/e0/tDxOBlllooTGyPJ72Maexx0oLFKx3wpaHprMJlStZ30HvpkDUcQCsceVSJatWKQwORbYJym0bNXIb7PYZsvSBuimYvbbj7733s2fyCerU9HbjkkGNF/QYMPSc2zWwuCwfskQDIm4b4YDynhyW+EpZ6RHZBvCdimjSOg0Pl5pgiVP2QdghgoSWhnWOG8T5oohenarkp3ZyPKxxR6UW7rMhtf6SJt5/0kG5glA2TZTdcbjHIp2KAT2CUY/Oa8ofb2es0xrOB5asPgCpwsVtxOHlzfeGynPFw9rRPA17fBk7ReYl5gVxmjOvL5gfkmiJ4+Yo5YI/5Ba38ICwFBlKBx5mrrauqEuY9JarSCfIg3qU10FSWKaHptmRlD+N0ZU57hkg9ZhTrbnM5U+YtrdVFh11Fsqx+KlNdkoG4eUQFyEeGZraSdcmoV/dNEchw/Vp5XFUoJNWOPB8CzD2+LqQX7glYU7kKvu2Ka/08DuPftl9j35MvIuvAE7fYZAQUlpRZ9Z7y0UMr8/KeAYt0jUvNS88sQiUVRE0ze4uqG1Azqm1jijaZ1vV/ZuudfPkYZUgqEWOdF6ReJk6smNsLaxp0SfZP95SCzz1Lx2kc4Y1RfiXMPQuObUnKqbRGtLApRJAJQ7Bf+eDzLbzz4IfILjPLjPux+xmkak779VNFj0ynPi4L8yw5GwYPzPqG579aJTQEz6GB/I4gmwBREWgcftoLOlBSSk4u1yN/5dLYpZi12QKTnzsUTJbTT2ufVBKKfNTVkitQK9vHacLD6nd0CP1oBYSIc0gLcPfKKJvvvMadfzD9wrAWFIPlIjadzpq7Sgu1QdEkqaf1e/ZOo4MsPUGX3w531ZB0L9Oa2tAdopuVNAmOFtPIQvP74bRwuWZjo8B8YaZ2dDLxOzhCzW+dSx5aMEUNQYRv/hCfGgh9lv1t5eQWlrbqmRB0ka6q1cmIR6bNKyvZ3mb+LGHRNNMTgYtSyrR31Oy/xQodevZSwGvm0gTwEj1w9o77UtdndviOn+jxAcdhgI3eRUMnOoVCdytYF4o1AqC7S82MYGEW3B/aqcfm1cJVbm5pysoZUHYabsOXB6WcobCv8Oy6OYM6AFipAcSKlYsuDLvfeea3QvL3hyBfo433PZVjsNpINyBEs0vBgQLpntx/4RSDPfEJBkvhyT2wr/wLmB4+FmprcpR/8Hv7CqwRF7KHBVY3+rAbP2aTvID9sJiEoFb0QGjMBwI6mLv8ZM8i1XteBQ0YlrX0hGO8bU3cEBYwHE6eoDeool/l+ypuj8ZN1s/oVpR65c3VinudgDl8r94ZJWD3qfXuYMN0FynEokIMbAEYl7rkAv9Y0E4VMSQHGyQFpWyIBpekjn73g+B1c86o5OfJkth0MN8N3xUsOEa6gQO1Eg36zC9fq2WFpqbtCh0IM09CQSKL/OU7AXnzbyCW3SC2hz93lj/9VTfQmfkzb3ha6pwMsWEVbH4ih2ROw58OsjioPyzytgCTGdtvSIoqZTa9zUkBT5zyoHvbGPPGfJtd+e1/rBlgtuVfXyv35iY9Bagv9RdOpO5PGzoD5yD00MFyPcZRwPwZywYOd9MnAGWFWQAx7U0xfoChvQt9X2yxcrbro7orGYqyozI1gcfvrfFTZFxoRVpOgflSeTlIQKigrZZZ/DlcFkHRJPo604e+Nq2kNTt6uES05djvFrT3nbM6af1V/vqx3dJSq0XXN0NdsBWIy9ePcxsQ0Ec55RW+jgwXMtOU7PV+/Xe95nOTS5KS5WcCefhmQCae0BKKWNYlSheQ9eZMNVE0pExK73os6Kp5Xa+hKUPMXarw75+LcHy/znT7IJMJ9YOnYh0Elr8uAORaWaH0JqYEBBGeL3iXvpYeqflRKiYMv0xl8LEuxlnq11ziPq7sTKmp8QovGhtixXnq7pz2KBrzCTa/ajJJKzq3d8jAAbYPKlGIAaNA5QowwDiQVzHoqUv3eAwVzmBKP9zsdEnpiP34TTtwVPjEcK3ubF4i1HWUGwDvBnhOcIpRuQjedC1aMXQrZGQFSthXSQEUCeTaf5rrLNVWzo8P72i3VPfV/NPvVQVIPm8B+c0bx4DgSOEm/i2wlD3/GemQKzy4aa797hF2lP71bqS8pssPadoOaAV7Z9PeWKLIi1aVc5bVm74O2nfWOxRvrcsJmx1AeSmHCfNz/N3uCXkzTjiiUW6+PdJ9VROJEea71LqgRI+c9EgX3LQS0xtY/FiupWXgeZbxZuRyhEslK6tawsvfBhthAXcrizRDQI+bSeRTcAl9LyU+DEj3n5E5tXdoTBDRiTDXHU4koFTlva3mVa/l6AWJFAt6NP1hch7Cz79b/MO226vakjMufAABZpMAzyDVICYrSO1D2+uqOnBsq+fwIUwOWXGM/kUmJFosw2tZBtYstjcnUl6OL+yRPEyuPp3aLgr0yUZDjJu0fxFBi1nYxApmnnO5jGVlaimllS6CCFsDQA0ItgfvNXyPIqTa06mC5xQ8TcJ3qmrKUJo/m/KQVitWX7yH/jmITG5rw29b1NgXtkfeLzFkA/HVmFyQHt6BXKa9ICg1odfVVvbX8pa4V+VcSMiK6LG9uRocgM5A8rEkOEli/RojkhpBGzHjZ5rdiZqSu6P1cCBGxVzAUk64C2fKR60S0uOrMBMOgMz1dNzrXlzImTKEiehDU0mUj98yAgJaUT2dlze/J46ss7mI5pPOSagijf1VDEaNXrXAN9O8Y3PMcNbGQ/YyB50ecRmbi9hCUSiLbfVZe51rizQuL6mK+wKzZFmzLgGa5nIjrv4tUcx4P4eix+/LA4kwM4+5xUe+87KJjuDUtl2HZiwE+S8r1HrVNuq4rDrKX3YV/xd3uZLkdbFH2sFMb88cy+N0q4Bnm4xvHoTw+rppm3LVrvBlXpgFRRPvRcXL/lWSpPVd5cmeEUa59lJQVKwHNqqEv4gRx635PPgDefYodUVy16HeQI4VCjVU0kyhBya7E0Xr0tYvsQv2qSgWX/Cy0lfca4OtYve4xWV8UBn+QiWOEweIfMWqSg/hZNEvpzlJsUqqiMx8FVR4mv7qPqtQeScCv4ytDuD0neza0ZkheDvT+fdkqj4/iEjDkcGOnt1fOcpGyZL2TgGMNfeZ9HPK8Y2LPAwFp5O9mnWm/eKbx5IhozK7QOrccTUnksbo9ptO2uaepd9uVU+fN3ibrqBYoiAgzpmCiTyXFo5caQFnThW12fwA7hIp2Qnb2VaK70CewERJfkyC+7iU45g17xSZW7XShybdNfCbIRybvp8rfjMrUQcOKj+mZPGurQi5fg8QfcnDJL9y6PPeWXZ05jPXE1DSTJERjTuTsUxKy6AT3dHmQMYbnIjK9G48hdvQ9xNq2iRgEWT263giPR+q7Apc6hYACSHGTWUxkP4Vr71D2ryObuqDzt09m2GsfLNo7vfgDVVw2TQQIrXx1D35vPZDzwZcumSRq0GNLy0OqBPGFyXJldqBxoFqyc8FcdUqoS3BA3KXzQz5a4GPNpZxfBHRjanSpn+N6dAThrUbTsj6WzQz7yHFnfyVimcIPy632WEthbI0O3C3RUUFwBgz7GOTDmYM4rjZ9kvVZeEhzWC1+saUk9u7ZDOSxldSworfVYXfZ/PT6bTtUBBtvuM4cpDEOF5yix756rqixjB/u41lNsjD9KuIm+HbpaFFLFHCgXUvkwc889yQ+FFYnbO3FhD6bJ4msddheeKsq/U696em6aS1w/l3oaX8bhkkn4L2B2VbO29AHg6SP16d23omDApZPWdsetjh1oBKM354U9jk95NlCFBmyiidjcBiC7Pa9ud9dFJuDIuNR+0IDPtGQZXoZ4rXFeK+ClFvZ+nhMqgxUbdkuzE8XRByJ5g3gcvhZbwZUSiLXhDqEyPesuzfvmFVWHQ6IR05qoNm9ZCBKVOniYB++qaVy13lXI69dU2M88M88dH70i4/pSLfGglqq8akpsEA574CD4vs3f6xjjt+co5jMqEgNrEDgLRTdM0wXNa6annEP2Nal3c+wsLca1jBax0TWEvdRnr79iynFe4o5WLRwcgl/jodHQ19c97K54WgPFW96Asbbp/rDou7qe4Wl5BaLr6CvtoVyBPXuBh5tT/RIU4Y3ReqKWPKf6R47Tzw8a2eOGIWCqby3/XVbGFgzuYHWgJY3qzP1hSIHJT1WoHtglfAbHTiZmr+qQ2dK1SbGVM7DcNRM1jw+EFdcAkqsVGX2ptgH8T+ILLs45IjSZZChTnwNuIP+YE1WLTCaLi9xi5Vx6p8E4pvbEvB5yK14UDJKfT1obd0iJUOs/ZA7HRZHD9EK9XkcAcS5rM4rrYVBeXMgCp0M5O4cBDVyR+V93b7zMQqah58P5dLN+kqH+WlD94eCyFhmiNztAP/NC7yeIyreE3Pqy1EHhTcqNuo2rs/7jnFN+FEvkH/Jp3xLbALBygfT7KRp2Xybdpkfu7js9O3+qQEEQ24r1hRwTUCPtGjP7F2z7jxyq5QUcKdJyM8ibWyfs2qjpzFujAb97UrlGSPSkjwHxXKFQKXDtBAa6jrj75tWwFABhe6Fwxcu19QPktQxwJHJzRJCALtArBny6bqfTJQ6S+MgSAuYsFQyQ3e+BovLTW29D8gGD0UNLqgyR+U494iYqsEWyZSpHm9cXVzE1Paa51X1Rt+molO8p48KzHoraNwf6nHWhiN7UZsFG2QooDXyALLnJ3LM8RRbBDVJypVpS0uNmh2orQyU12KOd5HfTTKSnjrWwEacK3fjwh55S1nynynk4B/XpASf6KbkIfjXyY+9PUQkkaPOxkqdbAGYU5K45t/Ifxe3CgQqMEFViyRjhp46Ab7HtjLvCAhcI5C9NDy8mrsaRhLFy/ZiVT4+f2NkuYdI6vDEYvxSXLmH3mudYL3uinub4ID0wn0IoPTPTMrsKQX6KmLiGbgFWBE5GWibbTgqcvrlAnMoLR2VnMZH+rtke+6jIAvpIiIaRHO0P5evPPxlY2uMdgcz/2SiL+AgTykwNg87ZXltHYwRlmg3/v/SqLOrRTiK3ws7f5i9yHPDWz0TLuDjR6tt5qcBUMCB6wiFlhikiC4oTF4XAP4je7qulzkVtPBvrOS5HGfLuov3pGoMsPt2zcDGbVy289rt/bVBNCitTPprdyunoCUFOjuBMGIG1TAjjnF/yX76CSs+M/+c/liWUZzvmWglGbmtkCL97YKdizR8ol9FVzLWX9X8w0IqGAgCM8yP6Yzo0UeCaGa/dwB2NOvWM6DOEe70xqku30RtIHI4p00UUGsPGjMMoLweyR47Bz9gF/3LpM5chbWSa31wdKP/pEbH06djNkyXmvIneZDKHJ5rfvC/d07Q8CvoBzG/qt+lnEtlg6zDOOOVFCMa/DFuJD0tvwukZGbxuOls2di4qYXQgNZUKS6/eTZFLVIx91TbojMtnnlnSvYheKLMmb+d3/A6mhQSlHxejoxlTqD7IQxqzg7Dr2HrTLWncujnohByBiKR6PxXdiydATuG7NO0su+d8JsLD9PAlDreOnbWVWMtG5OCtSEWMREXm4ezF4TJJcnaNRtTWUFDDlMhh6EVqmGd83pGaxlBdXwn42MjdVpuP4OxJ6vLxoP5AQ5uCJhvomM/BU+2q6UlqrfOJ1pMMSC70KnVk0yxtznRshtXIFuQ14289gdlXt9qsF/J/58U+sPwhe/l/w3Co+irAOLbRRFzO2Mrn/mUMrRSm4iCr0PFY4UVPnt7GkY3RZ/yhc79KpNabIK2/53lMlfoCjQTFf4RvV6T2rFgWU+maDWf8XDMaaCtE6DYSEiFRwuZkck6KFx9td6UjI1pMNuwNdC7HrPxx6aMGFU7y3INSt6UQtdRP6brPPdH0OBFW5WS8O+oluZMoC02EtfTAPHm5dsgm3aiFk/tIc3JWHKzhHUplCFHPdBa9hKNe/Qz9IkEe+Ah/SNx38N8+f+TQyFvbJdmk3DuO70QiIX7ZYnQ6MECIJPzgpBMYBNv0UIaLBLraBAf4wZr3EiYklkH/gtRc18/PTLDzkDA3tfKNzDuMuFgZgmo2BvH2qb+JoOZyZ05GKZHdhsK0PFTuH5vEu+e4oWnu0q5DtXpwcPgq6noLQDVT5LlluZvS32RmP9DYIIGaN09WDR5QgvicRC5DpQUU+mfd1GyoY4J0SwE9WFdAiY3cxXaLh0kWF9GMqJedISE+POiVkJ1OLi4K5o4esa9qbQNght6eTYJC2rqKgjZMu7vB/TVuE8/Op5xOFHd0rxxiphwhQLBBajsoK1kxi//2Zfok/PanutJ7cy1AZ9AP5nsyJNzucTWm7ZyDpsRyHoVUpKyZY6pwpuwQ7/oMTQV8xEf0PPIrCSr/+BdY75BW0Jk4eySe1TPF0WP4SfI7Qv+i8zblhVTgcMn+2BmkDiFmBQPSHfZtHeggpWOLlCj4ryph7I7noJ95sNfHb/wQBzfmykpsHdtgMfRWZ21G2PPJt4Z4KoHVDeT/Zk/N01qIgaHmCo6kvkbe7ugCbWj62mTSU3Qjw3Gyw2m0jGGmYDLYwRN8RZ97XAL79yvdUws2w2XBJOWKDRG4r66gShSSkyxlaqCTtVdqVxU1ckH8Cx5ch/WWbWagSlWvs2SdhVaxwI2Ogldj5rAqAKTDA0XegGuDDDenBhD6pHo4xbHh2AOS93Kljpfblgi1aHEQZEVniXCoWmMcoMyHwkpBP8/o6Yf9bkNOTgclfimjyFJc4L+vY6osf9YUsth1VFzNsuSMAHetlGtv2xhANODOkGMilWxarSuJbKAaoeWvf2vqCGPGm/0EXNyFaRoYgeSYIzo5iR1YxQFAzznNntezK8wP8eYtQ6k6M1PkXt3IDJt+RNgAaiL1azBHNUjfEZn7AmosU7LAA9VPtHV+3+eA7cSkPQsNSEsnFyeNE1vOIAA+AnFqgj5O0j9DSaGE/D0gNk47eXwKQra5qXOajJTCguMwAMPxn2BG0cAhxX7qtBbls+91LlDREU7WxnJ3Ltfm/kn/5DWzne+wahLICHitQ+mMx2AAU8XRhehSLR+TlSUuDebKkqk5v/JWFmrWrK5VyPfGu+VP6T7Uk2qrSra7j3n95WC5LIxxRP2tSwfzk87QAxRCgcrlMFQXfheyPCLBp5Bo5+eFwmbFLyPuUBc7FVHcHhcX7Qb8RjWHHw0+GG71mRNTwxZhAzsekr6bpjEdbIrr+mBj+Ab+lrq2o8fFKZwYvcI7wp8wo7nhvM/IHzChPqi6oedx561cw41vNBsXEgczbvqf5pJtNYAH6l+Lg2q8T6P0tPkl095/ID0gdqse5CkQ99B2P5c47V6KivMMcWQvo26drfvIq70jS55VgYFsBKt1h5dpiuTBQovbRKxhRLESy7uGsbCnc0h9U0HDYmgNMfWCddOfF8AKNl1HhnZbe9gEHnhPCSGPJ2sBT2DnT+XVmhlKTRe9a88O5o4A2vX5sunolat8EvE5etIgT1MzYK+cEEkBnhEC8JLZhcxdvirTrZkzQ2JZ0DSFlaUs7MVLVgXtJk6NrBR1Env8Hy5WE9yuU+NYsZgXSR8VkujeRwzGIjiNAftyZJD9waYV+7T+IZ4Br4bmhUJ19KtYqSKlgvQNLFMiDX4E88AZd6JVYkdhdOapnabcczJSUTtP9dxjySDwnj8M4zlhdDTeAx/c8Yfwb1tJr4+4WJehq4bJYvMyzfpP9qwl8IuuvW0RclvZFmxOzTgVDPzglPNM2dsKNJ3KU7mK+wIjV435Xkl1pIFgk69QTuFtbzc+KP6vUtDbrWZxc8vhr7aZvtYmRGFwAwBbZ2LwPO91Kc6pKDPwvomOhd3pVh/ZzVJQiinYpZGv3uOd41mZre7nFaSo1CoGUWl/QljREMYWVNkjLo8t6BTGPA28lvD6CwgjtQ+Km4GMQrTaC0bAFHMFalCjAMbTMuavZcZER+63QJ3uHuBtK0xXRz4x/KY8jq/fQJkghQDI43U1ERU/Ugg9VSQMWnMcy9WBYIbwOSc5t1F73iZo+AeWwfJqponaRMNfqkYJI4SUwLw9/kJ23S1VO+yYxuYCt3d5mnQpPnVaqs247nHS5p3NecpbMLbrbTX80GEQQv/fmen1o452rDeNj50PNpdU4Yeeywuu+0AgOH8RZT04zhhqXwqJchMvyHvrNkpWxjY/DaBfVDH/byIntX6lC6bV9UiZoOHYyvYsQa4WO73Oz7nGyEfP+h9QsTR1LUv6HSlaN/r1pkWwAqWK0KbmoxWOAlfBO6JUhC5lzqvHBUem1PRMF8t8+YmUX8Onsby9DGOl+yFA/3sowidPwXQXCsiO4nUHE4D8nlZvrRTWYPdTNUVEiWGjscXpAe98/NHkpDL3G9VSeUlBlDr1a+rFp8TiYaedGp/Zlmr5OORBUyVwkCAlrY3h+uEBTeCY8PVtDo2Gme5YLpriMR0/qO4GhJr2OaHAZgVlRikb47gIPrMK0vVNqZEX/Vr7fDXhB8F3vocKG90lJ/R3TkGIKc8MSdnKjLpLEGAHUFSyWgozEzzBusX1vL/7DDLp3D2UPtwFERAUGDeBqMdbfNcMBRPjCtEkIN9DSG+8LuGggpk1p1MsOBmj4n7htEYr6A5lUo+tNIXCoPTigrORL8uVSNJ3KVmiw7WEKvTFawUBW+eHOebWEpSpNeIh+Nt5UMrxcN2IoBtfNrJZYdTYLmOPh97vX+wZQECXgNQd6oaeAqVCqjiGEzJu4YpAiIO25PBLgIC8Ew3Cvohgtu4reU8NKzyxLpvgzPFBnxGA5p3IXMrkzJpNsNM6EG759NSgqtHduo6Op1D1AI6Vi5XBeteJ/GAZIj9OFwamD2q9ObsAmnxWcrUaRZ+c49uLpviYf6lY+qCrwNj/xQeT7d9bit2OZkcCgBXN5FjhqgXUnp3419VJhbun+rRIcT95VzntFaBY/mJ32tR+bhO7QFHu3ODHJnb5+iS0BdR70uBBfwuPfFojBDCoTMdOZsFpcjEgd+22TJlg33f83CwYA241qqyt9Y+e6csTzrWSWsHojyLI05FkOm/ojiFoNxU7GzAxX6/ZP9IpXgjJ4KT8FXg3Cltly3xNsji+MooD8R4w1+9yCsAD8k+UgYE2e0z46takEkCJ5E0tIH9jDTvPjmQPcJ9PwhdyTfC24gXciR3sct/Yfu9njXxhROm3NQdtWX6RP9RmU4O3/tb8eYi4ek2bOibiogYLx+70K31+Kdu4rEN2pGY4rsAkv9qU3YVPu1ZO3DSk0HTS1J03TF65Iz30yKhpfiT1OaBqscQS90FLQ+aYEZmZ3LeR6HhbveNDKYEm+JHEWt1+wfMCK+KMWL28j2dc06w8fv2nN2+az2I8oBRgR2LYH4DBJSOApQEa12Jn8NHTbR8PAuUUSN7EJ4JpE4tXZJy2SKmfvUorgNeJFKeCf/BA/KIKftRSJWxHl3EVLjQmVQRuQCu8prkK6m6RdoGZPKR523IyN/19F3h3FBuA1eUNCydmyr3WLGzQm9jqFoYjUz0F69OHJbWas3WYTYoshfm1c3WGivPNWXg4lL9uvJQGxZQipZbxqNb+UKTvylH9OZq/cLK+dMt2bNym3nBUphmV0uq2vTg5pDjaABP1VGlaQpX3fDwkMNMKQFG2+WO7r8TpfSv2kGriH7XLMcHf01G+Bu7hOYSe2YpPpMnIdEuNRQOCmdK4cFxW+LhJTQlbv0raqrhysaczuymO2NBDvDFH4mqEh6SNlbUxHL3rDVTJiLogu/R2FbtDnWXC5BsSsceKFkpo2C/6Zv/sb35jZq1dKuT4tMG6qWVduXoi3l7d9lV97o47y4vQKD7iO4VPNQqgHee2xczAg8oGsuVkMfwn4Jn2qBiZR4Sz/gBiG7RXgM+xrkSdA+xIXVpzL3hOUoof0nKisowYzbW4OFLpWoqYELeG0LeV0IU5Smd0N1VxW94AZIftXnsnEwdy8PODtLs/5eX1tVFGeqXgGS1iGhZn3cEYk3N42143DLDD0N9mhLkXHaOc1sELkQ3diS9IWOm24yqMKEEgigl56g14uy1WR3Vuxi5qVBx4ZZMnr7RfgE3vbmk0A8cxpyQ96KJjRb2VmWRn7gJUIXx7LwSaiUY+CHF5t2xGEdvYbqDpcltheglLckOOVagX2SDqTR6XXfTOwaWVdTZJEh6brqkhx7B4UurMSAcTwUEr2aGKGealtn/5/K2dQB8jLHrnSsbhZmoSr8lQKIBxWPGg4QR8cY0QVcmQL/PcTrX/3e+LyQhFnVF8vUUsvIrFY86NPjME5DNmzGqyfIGcO8YrQ5ZOx99fXvVHEKWHF6AtrW8TdgjJoUXZm+2Va2rMp7PHkYx6pAZeYzoFSObAGxlEEVkL/NLIChC7Ylg8vsO+OxTBUtTfc1c2nwmw7Z2ANvXWcXZ3BmFd0CX6Xj+evNqB23e01slSd/iMAuHdiBxJhBA/PdzbYoWvqWbi3uVmcnO0gw3VV9X35oG2UGXsmgpFve+eRrTc9ZrvtAj+T42g1dz2eVgGEMeIh64hdwihcn9RtZCzHAbp1N+XKyaFXI5NnjeUmL7DpkamAK36ZoUDk8dLEl3mMXv64YmeiizJ5QFc7Y1zkaUdFb/SvNcYHoS/BbpH02l2Fa1fD3oTwqfA3g+DUuoAmDZ997XjoGLn+s1zFp7W9C0y/xnSq94L4q6Dz8iJ8RmMM8+wLGTPmA+EZr80X3FYbkm3YACZO0kUl1XbxFCMW/maHOZiKq/GI1If+bED0fM/GENa9ey3n21QEFtr0UUiMUp1aDG3cz2NLCqY9Y9DtqQFM0X35FlMmsaW7ga3ieh5sop6ZwFCWumNkIEjBQl5U16XlXNSBHIa3WC/uSeAQXFo2UI6KdbtxcDNmI+qHRS+yqGso9WbNg/SBXLjt1V4UmWy1ZIDRw6GHOEErrn7AsKScVZO3/Bk1HAbfxX//odbaO9d+oS3FVxn6u6H72E/gJeVNME7+Ok99O7Mk5Ly21iDOrcaOxN2AmgP72gEDpMTaHxdqnTZC8Ewoi9DZCBlSCh48ulXy4Mh3d2eXGd8lvHpQdVYeICnkkT/G3b9NsaWbuRrOl3K6JuZ+CdOO8w3Ro/OVIUA8IZ6WZ1Qpt60i+NwasDl9bYetROCOFj1QECO+UKX7eFz874nDkBD1DZRuGQUk0u6Xq8TDeok9unpRd6Pf6i1gQdUeH4mYvc1X9r0wkPWnqby2R9gadyMqOF6odY2YpHgmpf45J2pmsWhzypP/6j0wukTQqDHzJ0G/zLE9xY9g0vBkNt359peQEWCeDzhN/8El36a4awcrEIjBmUCO+ekzW19cY+gZT5SSMyNiQySzvwAxIRIHyOJe9Zkb2a8XRaPCCYBlAi6JF+Mx33RGg9bOFs2SEbFYvOXsC0DAR/y7rl1U0kIA6SWqA26cR5MNql2zJnwMNTt3d6Hlh4p7D3IRwQJQSuKuh7iVK+jr00wqxedJ6mbpfn+85fV6MJYWuGEZZ9i+cyEKEZNgigmcNoNa8L5k+J5lMroQ1N+FU37xMy8vhp/kKteYB+VsA5Z1hw7/CKA4QiwYY1+JE1Kc1/A+BEZ69eGuYdgI6N+kNF7dnDORKMw9nCQeehAbjtBIJ5r9Un7kIH56b0j/C5s0/j3Hjl0ba+uD4heQmaIGDsiaCiLs5NGGe58SBIsNzLy13n4uGnar4j2dztzuQVHaQNw4/0q4tWzqSMhgrKv8ASZd9YgIUmDjH8Xd+dC3qRQFXlovpLOkY980/bZhqh91YgCYz2CyY0AeiaSd7wHZ7V3l80wi6Yhbr6HhFpTSAHyO5p8dCMIIPQ4ctBnoXbSHnFdrV88QO8zCltIgfsml4Ae8ftxjPsXikpNSv2LiMbKYrA4lITBzAvQxkuMxNonyq2Fqzwr3QMD8aSxr98oF4i0hu5o1n963nZy8cNAFtF2Fr+OiJiVd9OPHgw3LdkjFyMxJXZ2gYLEDvC5RtZaH9XKuu89rnnoyKEavqi6DfV+9LgKoLTsgC6TORt2sYykawVHEmKTE/T62aa8YkzpexDcH5rKMCyQe2oo6DWnm2FNRl00T3KJLiyWWExATz8+3WRhsJ5fnYeewPf2W+8vqt2LFsSAGqNeONAz0EILEl+WgwaL0HYXsOinfRp8qkK5pdvxYwkr5iIzu5tPVx2kus2C3M5P2oy0mb//XjH0b2p5VWi3106jMFKG2Kr+foWlexghgm+Uyr4JiHgxmEsbvBJ2ua4XhJ6mKeZ9uyt2gVctZcHtZv3ewtpHBMMyrWOaXF6y1FBFMg9BGOqV4r/qiDhRJAxaGDr42pQQRJjW20bdq4BoTJaboDwhKg6A7VWMuUxBlggy4fBQj6PrZasikgi2oat8qn2+7zmRh3d+9hj5ARTkm+h4q7J5wzPUvkp/baHWwKskm/Xa1WaIlhzFUDVermRalqjYlN8kvguaFPpDUUgxruEXESmcwKkr/eSpR/usNVTnche1PrOYB3Vp0rAw7xxFvioEuUtcpMnunHALrSzSBWOgcOKtoo/TyTsFYBgWcnbdZANDK+nDFDDQMA9AL93Oq2LRhoagvBott4A6knwM2esxtzhRTzUd7thCLU7Dknu7klNjbPh2D/0Bz63ADTYb7zqZRDsAiYrzj57x1y6tkBPcl7sKJIuj3hTSF8iCIpQAY9QNy4xh0dm2qOjMmpGZOXUeJ93qpUXJSEwolI1lOxliUo3smV8u3daZLBCdMhiyK4+BDk5LQVOeam+J9s9pcijj4KLBV46WWqOOcL+BkbfmhHbHrhWVMczStzJQzQzwTIUjvx45Jq39IKRCXhhAWXPpKlf7CFFh2GYsX7Fu1YexTFGNNZCqohrviSYNvDQZd7Hj404UYQ27sYgeXe9ShfnBPJpUg/x1dYIfQT/r0TnP7YhEIy37Oyu0XC1qjbj5dKaDPBlNEY9P2NaoifqUNZ15h4py7yD8tcutHMPUG4/EYXynW0qaxTr1HeVp37cVHW5W+fD/yWIGZE2eqDY+Iy+YkyiOOAgMAVFxuMkN6qKCTkO6OlqiuWxzFbHnmlk37YcMH5BCWYCxzhyUTDKCvSZw7fbwAKYV17l9usfyAJNGdc5+kWE7PbuSI3+4uUx02LApQ4GfXpeVpalajGi464ikYjnt24RqRORvPo/C5nRwQMNr1piA0Fz33+0jnnuN8QReoUzsmpWNFb6fJJd5gGZrBxgJs3xL0TdN7i/rzdfQP1qk8jyPp80++Bao19jLRltaw4ge46GLxMsOH/3xJfXp+g3JuujBTszrsbwXGwICG49h/QQtBIU5uTfIKWbGiezGKZrrhPUZbxzTp92r8m5qs4RDLpR5zfT1nlgRkJggAEQxEA8d+WgLMrXbzyPp/1I41bEeATUPiDz/CERJQuOCPg28exKd2OBj3tffv4d6mTMGkXkU/cAbFJPpCMurSD1rIjqvZqtZoLQqbzf1W3bGPHAq/B3ScjOBhkQL55FJCq1q++ELHdlLrmPjzmRm0ZAGRdGyeWPlFG8J0VgosDgfoV92tNapRe9DpTJV6TyJryQ61PGrMTHVRtoq2vcYQ8M/eAjXo0C+/JQqNScoWgyId5c1b5SBPFh/18kGsXQE+ol+4Imh83+Xegof50Tq7n1Ryjv7332A+ILJ84vy0FAJ9tjwxIPiuUCThQ7azFR9bOY87eddo0V9fmu5RGxrlFpKSBvJE/bwuvT/H/dg6dpUUjBiMfzwaH3/eBgd5eEQMNs7DKxfj4/Rfz94yWHEa/pCqJGY80j/HQqHuIxqitK1Aef+QfmJ9ep8gkdJnLCMUkn6RSVTShzUAeR5xukp9XDCBzU4FXsMIslGSz8TK6lbsBh+dDlNHSyfnWTgYDqlUu9KWRfCorfJ/d4LQrUTziBNplCEuj1E3MMw6JoGXRQzby3TegVzc/DrCK7jg1TpXaibY3gyvqup6HOiltlO3Fc6U8EzpGr04RvzlJUrSL1EzPv+eIsAFjIrjGp89bAP7yK993CEMafb0bc3eBOmkLG0vZOpTq+bpNGuEvBZgM98SGp5msfT+NEs1faPmJyWiBxl7GTzE4+aasOOR4aKmQhs80bidxDpEtRaqY0dawAdQqlvxhtX2gFYfVAq2ixTcYCKOdaTdCvA8xVJgxkch2jaV8nbAFFamKM7TpM1URCat3CO5vPOmngM3hHFFr/vB62Eb0TPaYOtLvZC5rm38Vtb0iPsgukX1bx8T4WKKqv9zRza8ZT0gonMB/FNILhaLeJky+N3FBPIBY8RqTbplBa/WSnVDp00t/ws8Uhu37xRrpsFhxEmvatc1tdIrII7PJSlh6Qvrx0VEXwR/6dz+Rrfca+LQEiPvhzorG4Djxa0kwiEvZRhApnSX7hrsKThVkLcCnG0jEzak8Sn8X8pttAY9A50dSuoNmDqd1384PHR9CMvbQp1zElIpcJRKk6j4TCbuukQ4XySaWWnF1apSHTZaBaIIkPaPQHwPHF0GaMFN29+3c9HhpjA6ZbddE2jMe7XsXsKJnrMqN4pTRFbnRuqrWBtrT5I3Am82USCdTbpNKwl7Z69DCtO1FzwHzisiGeUOlGoA/JGB1owZvkiLHKkiFaYalpREAtzwUqn1/QPZjVjF3aB1Qhilw9JqEgiesnQPhAFiOiVmWahPFX/dRv5qWstqHnDvUIuTlM3r8taqDqU2JSemBBfqtHGvMQ6kx82cHNSnnt/7nEBo5loTLheK+OICNNQJrD/KQ82SvC0ma1V3UXb/6IEuRy3q6xG/3lwkO2Xt9MLZE2XMZA3z8DeJWrAKGO8dmcYm/4YSTDa2hY93d+r9Qx6iVd5MV/pZMp3TiV9JSrQVTJVoDbviRtw33V0UtLXEro2yw6e3mSc3o21ERLtUBDuDDldXMDR4lWKYBidZMoVyq4rJ/qHYbRmU9H+vAd3mJDYQXwPlEAzxrM92725AltKTR58hCyedj2z5/Rxk8YtHYXny5WoZ3Gy8cLkvuYu+Gja8lREw/w8qIDLhLviP7iWId5hLcgpjPjdgOtiM5kJUdD2vwGPBWl15Vyq50sbcZ89GowYxySvNRjDK+k1NlnEqMGywI8SiU8fQK1K43T8r+HL6z3s0dwDI6L3T9VSAKPA8p4U3J0KRfv4Z20S5xYwSGUknPfSw28dr6hI9XwvSYzUPCHlYc7SDxpuLJHXYNZ+m3X8xqPPP4EMENgw5l0dkGDMvf0FSnd4FqUOJBCzhw6UP+KPVLXp8UxrZZm/GtwYdlqXvcpF00VHOopUUkm/kFTAC0BttItm9q0CftFoBmIBjy/i0hCJ+kO8lUrlDNa6UWy82wweHYtbyoy+pzoZsXy7RGdS5fS4ktSS4gYgaN/wcvH/PL93SkKT8KAMNGgwbBlI13DXwJPvU7t9VvK6LmI+gm2jG0yptMM3iC0SCkvBwLiE0Jp/xK7tb20/AwLZNDXpuOFxmKkdI4YlQOr7nIbgwszip07V5m1InrEFSXxdMzP02p4Nmzj25lH9Z4lESaSa18rZHT+EuRFn3i6LzNMOph3WWDwStseDmUgEqRFwSoIvhyKONsDfCvXwVzQXUsjSVCzfKBfdkoNZ8wKP9+mo7zXeGKzOTMd/DFBx2Qdp9iFjy3k5dfHubWsXLTiaeyBsFYcLBTv1KmcG8NmHvvr4eYwHBSvbc51gFMcaEsnhhmHU1T24vnhCzVG0jB0J0CabdZgPf3cf+cArIDPvpCiTK2Lvri3LKk2LhzXAKp0BXQAZI+M3/TqzGk1nKWtPSwF+aB+nC+GzlAx18WIobm1ZGzCqzC9uXvaUL+acCo+zvpP/juX1R1IZfB73cKbOkJj+uOjIm8drAXFoSeAyRNqeV5ueypEB4ZJ3SJHI3XpurvftXgXP8NiFQzqvWbl5JhQppXkUD84908PUoLWSUIumnDZ7mucnqU7H8+7ZT9RJb+iXkhRLGFKfYEHYe3wwVPuoWy5kc63wyeL3JxjiDisZ765uFFPPIhytI8GVt6MSKR0vfWTD5UFZhLy1rfD9IhZCPLMzHHXoyjRNw9FbI+8hVxyLs40mxyEg3F5Qc0zNsWbMpnI2QpQC67RnzUxQi5vHA+/nqLjNusSOntr/NWzUGIc/OEpu/87u4zV7c0+LG/n/fU8B0W1fgJI6vC3vUTsqYnKSJ9LvI/Ycc4L3ylbMlU/nbVHAt1Ld6X3c3/6MEdHOpk2UKWmp1/jPTTsnLVfxuWF2705WiM6PyAw0ZxSS8182enwYgUhiYI+b5dqI6Ih+j/+V7EyI8tB4EURW8JB9rLCE/Wes/av54FK1PMhs4tW95UBDBDSoR4R5v1zjbnlsZ4F4+JfZ77dY72wPHYY+Tge+m9O1tCdNupcik97EzUD2wdEsbp5cJTy5DHHGZnmDZNxS0jzUHj5/idMuPCi+YetBSl4k2o2dtFPQ8LjrG0GtuVk3VJVnkp78tJ7P5KGXWLy8uaht6WONb6Ld3vWIPraOfZfytYXMoRTfwj9E60GhQ/ZDiwM/12BKj/yB+5rSRvZzamSNP4jydwa0O0W4C/svtA6hcbCV7zSPgx5QOgxOyp2S05qdoqxEUW5Q8wtZ6JpLqXeCXYff24DM6Wrk3JNgcbw4oFwLmLjC2Ugy0NVjtJ2CHEYvBzi09Y86iAnq3Z+UaH/O5L34p1nx2MupIE+XqkAEc1T4yJs6+did6vIS37jstoyRqX0LgnInty7x0xwPPRrfOBeKRkieXyWhemShSa+B1doiG6qh6TuukeKE8gfrVsgwSfFRUduWlUFi0K/2ki8WJaCwOl7+hDgQjo+j7X6Pz+LkIbcpB+ku9LLyo0uWq7tadkYAdTKpaoxueZe32OIvNuMudoQrtZnXoe7JoxcndPyYnztyoRHQds0vWcrlPxApk/z47v+ptv2j21G5Zs4+k6/O/rRT35oOqZ4CGZDQYS9WmdCRoST1UJW7LkbEB7iFd4TVaKertUnlPRy7klbpZH4m0S8T4ri2j0gG2Sf8aqzXMC2foW33mCfBi8/A6mHeJPSu0Lz+40YD16DQkxWjsAJGqL0jDpBgnTB0GUDai9E1Iz11bFqVYg1mxPvxw8zx14+ju5XZx9yfczZr7zTzUf1VCsqYtqZmSZ6GGH3JeFYBGn9KLIT6uuJTVupQFOHa0TKb87I8iei2+CXjftRhMjYjl0jQLrK3BP76x5IOyjY3bhT+QPrzh2+w3FqMlUoecStTTMfYfA7fkUvwD6TxzB0GTgFfLCiaXsaUfUrfcyBAHRW/gOC4oUsCBlcJ9x3cEH7aWdgjAXcdqxAXgRgEw37lob061/b2BYSbnEHnAGKVfGKWC4eAA1AzHWxcRSfcn9k6m1xXe4wdJ1ReBZVTW1VNlujiT1G9zA1BoBA0d0aDbi+0qhQFeo7CbJrcRQ8cfh6QW/5DlAZ2bJW44RLsS2T5ekwP2d4WxD8weDkksMMr/+0cnNfRD6zf2IV0Dh67vHiq414jT/88lFk7dCMf3OmBFQUWpPkqbgeaFrzNcK3izYQq0JYCthOxf1vEYOYBnjWEG4lmqFu2Fevktn4obGxousDz8R9c/dXt2OX+BekFxnrfsZsbrY/gJ4Z76JXz/zlF5gJNx3Ig5IHjksFJnz1cJ1iNuYDqKV8u6ChrL4sjM7srHHJeTmuGCp69xHzUG1fgHODlzLEdDxAbVS4+s5kDMGMltY0N/QJ/TODPi8RjhZHuDEx7TtwehFR9AVp+sMPFT+vPZPLRYFf8IdxP+2o/IQtjfN+i9W1VlHD/raswtrvrpuFGVyiJL2tWBGjILtXyvGSKT7X6IdqU2OUFGQxBlO7iWhxBS5s+JhfXQzkHHX4d+A8tnXlJOQEbePbVo5Kwe8ZrS3yIEdkmiret0wsREbItVECOSufL5LRSyWFaL1ByVzDavoxN34gih67U5GamIVZkrhYOtaRcYZPiCKxsZ763q+K5CP7Ehz6PStXh4tAke42Xc6ZfjLBMneifgNWrvLxzG0CDwef47ZhJLmcLvpF/fxUSQ/5TJTIN2Fk0wfCuyfUaDvvpkE8FdzXLOiS0aiZCFD9NBF9wjfYnOcULW4ejiGNxN6iBESL3CLht8h7wCUqnWyhsB7ZGeOPfTOenAN+RBKPTkHK+r2PbYKIVA2ruX5QrWNAMHhLCieGY0R6neL7tGAHzL3+Cn53Jm6fK07j4jESGaft6NhHThEH0sLNbn1xc5CCfVIwn64nuF28MIpHBxTDyWQPBTmpmpxQnbT4x8YCYVjaKHUA5qYOTiLxCXFmvM3Dskz5Ylw6Yx7/nI3TL5h04rQGvEqcTpXrPA4p8kK3mv983ZU+PKgQMBMwGpTgckn286pKb78cEsFkiJkXk+fzsLEcRPXkL9O6wFqy+c4Tfv14T9pcYW0yBgdhBjJFiQEUugZ2MUEjZlcd51/ixY83EFDPgh7jeEZsmvt45X7wR2aM259s3I/f/CIdUJ4GXyu+kizS21kB8v4vJ6Q888QJa8wvAEdsNBfJNOPxvpnTDHCtdPAejwI19tKH3s6KZeOXnu0dyrixwNGyGCY1mRDHP6aRFq2/f46tPnSOErN1BrpXTt8JnCI8GPuvRZWZ4bn3aL9nfxoe6hY1y/NKi38kkdvvT6ljURi3bcQTpKedIa9VQLCj1unpDG8GzCHWQYiFxL/qt8x0EVJ6KVfdTbxHg2Zisy0EHCVJqIUnA6w6sygQ4SNcBSF1T3Auay47bLml44nQpYcQ6TtwPhMrCaPvqKyUulnTHK+VLosQ0ptSZv85hvZSRmDwfH8GrBw4L38ZDDP7GPNG3dA6dJrF94BykaOA4l1ORZaJ29wVavBf3REnZzHVN2p5n4M2vavvEsFf15mDz9TwXcVmmLvYpjwEZCa/A0+G0R9hDfTqc6d12x80WPrvjGoYrX+NoNYYky3tMy4ijEAA33ARSVnOvhsQ+G4PHfTmtS+2JBwkJJsWi6svE84VJlg6nHC7YwWiKuA2AkExcXUbZMPGBlU5EtN1TAn13JrR2jdQ9ZyZLTFLRJA0xc2rvLCszr+OjG3MeM4GaGZNN3e4efxcICP19nqupifHoQm43vkCYEePxwThNfaMePlrJVol7zLQr12zgIQqDtfrdayWI/kZRXWB+gWEAhAE2ADyMqeKXQ5cWODIJwZbGKnp/duHhb/Oobm/oA+YI52mT8m8AiBPNaRtdemlVvTNh/Ujfhy+4tKEp2ttk/zW703JV0L4cZG1osUAkcF7m4DR8eVOI/l64eJObnjdeHqEUBuNOdXOTFwd/Y+YQ+R+cpfI7JtubKDV356T4WWEh7NYrjevDgXS3ZlV2EqsRYqe5R3hfcS8PSNpoiErgYkuJhwb1cdEiubFh4EtX61pjPe0JFSnQEdgW7yxDF4wIlgnv1dBaXOmikJKfiuwFClnhXt1h44jXyyDDavi7FeFWtBhwpps2dO5xezU5Z6nEKxldbeJ94KvtPgzaYbohfDJm85A5IFV5Uj5NlL8yf0ZJGRfsn00m8DYUNRzpm48KOdLH5FJ27RPVtnJ1/H0vJRXrJrVaXkq0PqDAZMLXsjlfbC4OD85+e85k9dhWMhhPZnFE4tj1RnibnTT6kfXS46Ax1kt5qvWA6uBedRunhg1CvdRRklUYw1/UvzseE78PxGrwjg63OLqQlQTHZFIlVpWeCFGzzGVRwrSDW7ezpkM/E0dXF8ysUDSAeVgFZ71ThV/Yjfnhx2wMLcfuWa1a7j5RUFmizIBmRwE0khfxuwPZig9GoAVl3GQHGdQrLrWfmnOAI8TqHiKPfG+24Idn+nfeRb98FCTR6ePfb6tBkOQqkF0amE12IDLP2PUfMjA0/6iWbzPKngAKbYiAXqMCvLrRdntboOTnmTrYBRoRLEllW7hXTPkLPDenzM0+SN/BehAcaIwV53vBt2XvJvHo+ZvqkUXfGO2Ucp1sMMNlR44pXkTUsxXd8arSEHQ1kfNbiCEA9xWPOGXVgnA0NuDia8MrJDrW4mxCU6aQAY6NGHSW+UNH3qeugK4fMdqHL2GjjDxAu1WShzaEiDTi6O17QJKCSessRnIG2BYnEXrnpXurXgwnlxDroSo2aEjt1a1HhhGuJ+v8ClhOH+5UqxPFAIobGygzWGPPxIPrmxgnpReYlF0UrVgrA9UQQpavNVdX3NZ/uAM8ymtuSz5WoNqZwRfLWmW5sO2L5N7J4artIesdOauVktTCD8/UkuZqotSbglWaGA71a17qngHig3kx0KmajbyFdIjg1vF8i7mVCqctxuBzGzW6RItaPnycnEy0YQjyc+y7Fddq7sOg5cSWVijXcZU27DpolczCpDoGe5LJdnA3THiWw3NNVNR62pkvjqfQDQYGTvpBsDAnciPkbHQCrzUxkHdDjrzrqAQHBmIpRs6BPtkTXsPt4RX8xZrXiiHClH/K8uvF2YwTM0+FFwlGlXT+NKNrhAlCdwv6Ul1uUTYrjTwOABqwGvpMDRa/Fy3A2loXgfkko0veil+EoCG1L0CW8fzoQ6T8ok0B0Odrqjywd5GpFgndYpmFHoBxhDwiKM1NR+G31GtATAvcyLsC1xi+dKEG6F4U8LosVbBR/4UUkSWqBq3pO8DsZNvDNKCfBhbK9DVjuv8nrpoArocufaWtO5tLITLO5NYEDMb0A1WvBpcWmtsb4+CBMUlmGa5wsAlt9NiBvNL3R1xHm12R40CIXAu6XoHUM3t1ucqMdFb2F468ZZ8ihhMIDfNwAR2YyZdwU3azpx/LZdX19MspzSOjAVeRN3G6HNAm2P821b4D/8O3gewwxrB5a4L0HGkPv9z/Z/Rc37FXOAiP1SLhxcejMBiYfXdCpshabA2FZDbGmUDnktBSBoIQYl3Uy0JDqBs6wu5woTBycE2+dssZj6/4fcxHUbXpZF2wJ+WZYRklehKDvfkMk91yG27VFlAksgeD4rqz5QVTUeF7i4B4HID+5PbN6KWeJBONMD7S/BDH9id95i8HYz9faefUnAxGRaQerVxYvSQ2Ytqu/34AwzN+Y41e/H6i5ZNQk9zOWoEzvolTOsgzaVb2O4QB5gSl8OFlytFAbyhIWVsoANW+xQKS8O/8CUOOIjiGfY8xukuB6AaZbQim+PYEmAiVx2pJnXBYxFgcdm5bJzmkByy9LmL7UHCW/JlhbWNrUst2jgBNpQmxaEqM1xamZoCK02tWYUM/16FTLnhNJvb9TT7gPHLCa/TN+1Zn/RDE2kPqm8+STtO/hC1S7nNrjH4X6LFrJeF/rPBysTTRWyxj/nsaMUVO7H6ruQ6AO7qvcebbS9kAf7MOKIVkOq/+z+3rT17pV9MDn2balzEnu68uFsP1IXeElll6k5cq4Pl5U9TXferSN89AhYtBaS4bxBA5OWArM/GNg/2oOxfNd5Kj41rHV1McjcacU2gYR48pebmTMwZkAcCTAzWP4hTlazBbvNqk0FRLOaqmhirbwdv3wLBeQYRUVGXGYRi1HrPs5PFao3PB/S1sBqbM+3FlJTJPsep8qdoCphmrdTKNDNVxeF8oHZQeumuyDm6d7PLgKcuHgBTmyY6Yp/i3aKFAgBUdbU0Nj6QFN+y7sLbaBXCuztVzdNLdQI009R46XVT485m2FHvWxFyfKuoyurpmISSNyki9FvYwDPg6XJE0agrn0p60gyJl03x6Kw5HM0VnXCG5fq/zb9+OSigFZsUuYCBqtmnlFJZocd3jayKFiLmseAr+W6wiTV2Mn2QGVLWFQ4X+Z24icqHqpssoGkx4cqKb+PW47p6fz+NPdQIuUJc0R7pJxCRl6JK0cq/lspH62s088vNPyujmeyFu/68Pu6xac8tLS/VB5FPQIeR/5U8gsEz6kcFGDAr4lapvZxjHYhvGtsj1lCd2e7EFm4UKP7buzmZuLYZaFMw23bNe3/FpQeB5kyXgvmtTbXPpWupxrd3DG4RmYXMUPhKetsATUMh/c1thChLfFBiig+tsRlj43zEa9UgYplKEk3oFnbl9mmc29iVMN6mifnRj4pDso0vgXUGdqDq+Wze5abWhTbUs0gAZtR2yQqgQmILiQI+8UuFBJctIPMILB2idR/V/V0iEI69xpW89S1wXquU0+k/3bXqA1hAW0JbYAaRY9N2PyUCnCMIrhH9L0XZLCLQ8IOHA1HT0Wswzbkt/aSZDtobdTgJ7UO8OQwOQvGbJQkD7PWnLPdXTR3TDLu1D5nmepBplp7AmFrA9T6r92zgERxC2ldYQ7vk1IDhHKWAQYgAPFXRnMmSBFbf2+TxX4Q0UccTVc8qPnNM+drD1OYQapQTfbs34sdw1svXqKZGX4cVXtn8UVcnMszxkAx3XqNUNG1sMrONVyFOpblPTQNPUIBD+0Q1kc+KEz6KkILbKEHw/BeyWCvR6dsQ4Hp6zuZ98cR3CM6sttUarDNo7K7PJDVGdn7a4quMBl57lPhXhiiewy04F7h7fryYbLNPWCVo+H7Qg04HUjlPNTaPNz+PbJvsY0oWfNHYdi1xMZTlvqQL8To1msSz0HdgrkF/I045Gl1D/daCMXScm28Bxf/lfHsdPh1W2jveI7GqzZhW8KY903XW51hzWbMlop0Vo0VmI3Ll4Dx6lWSmAX1WnNuDQK+8Xwn3/xwkO2zAyL3YEsE7veinjm4I8GMaSjEXrw169FjWadOXgdI6grE+S2l/zBesvhilIrCOKC6xC2LXvOsdf77Iy39/tPZkGZv6sqw58nqYvHZ07niZkyLBwQGRCqSjH3V1lS3ICIRXIvmlGhEu2DdGgG1jhLspj6uZJXFlQescjZjaCE4fNO1nnIILFnijq8JSDVZt2RykVYXCPdaWymj0BWDhJ6O6VUSbX/A1eg+O+isod68soYiEgl7acwoGHu+vfAr7rmeiA1nz/BX8K/q9ZXSiJ4GslOlKetca7+Tg57xOWXY86dl6GiZ+HG0eH9yADQ3Dpx61plKmyHzg2m0PPMJj3HqjA6i+2bXDAxnzxt8UQvZHqzF1a2cVvmlcVS6OHpXIvSONtfzHKiXMYkFusv0wYIUO26mCgD5ZNc2pX06XSSU+wpwf/Hexo1MWFmFSLOihiig4YaRQ6LUBO9NKpraQPEtDSiiUHarp8Dce+oDyVLyLFa7y1mw9/EUmQcLP6ndIPA4r4OTmWln8f1bRxxGND6q3n1fivJ4VUJSeulKq5fkBUdaaqaXwUMe8bqLkDNiBo9e8nOV37vavpSwlpfO7U7lbMR6hEpcDlSqqejWeCpEWg0gQzjSIdiFfKJY/XUIHJI9rV4J9rLG0rSSWexzTqHNLpEkafLroXrl4+Kx7opKfwYKIBIcGxcNp7yC0R4sgE5agJd+35F4KSfaAVfLyjHryQhCp9Aac6ARBHkXXMYCenXJUD+OI1EeALpR3ax3nULER+gbkoKWjrbh5KiL6AXzPIHkQHD7SJ3o/4+xCQWJgfnkjGh0g31XYaYppUEfaPsxHz4VrWVdqbTc4mnekyilrENSjNO4yujU0YsqzH9QvAd4LHKep0NXFm4eti8eWYRfb+aRDyvzJNBt4TaIwSq55THaMgw5MXVa32pstH8IKrVBND6n4DvK1IRm96dhp/wxxL6PSZbdpYq6dV+UA3avlW0yKY4UncD9FVaFQU9vDc2nCEWe9on8DpPDQa4V23aSaSL2IANLKuLi6iJMkjTqFeSzrPhCrbmqg24TkHqAtnOYWF5tfl7eCf6WmPmyZ6jy7atWCTIfMh2gbiK8BxpY1G5wNCInLc8qTO12BxGK8k/3Sl53qcsBeDVpW0nWN/I5pUBiPah26ofAk189ob4wt0qvzDSJtogHXygeOS89/O2q7hm62pHNS2mB1jd8AgJHtCv0Vdp7RecmNn5cZV6YOtAhll5ewFq2dZb3jWUWNrHRx+w8dcbentl9K+Wj7NvturzH1V13saU2aShU00kbdUhDJLoViW6hBNlc6ldLlToOBwArK5bZEfqo2uBdYUQX2zOeMyzk4mMzjNRTKqMooz7uI8TalgX7cDa8KQgXlcQPxO3vDwGIZ1E9SGFjm8q8GHWPFowEiPZAHxNDKrotbx4fNcSlwOp2sHpcK9jHMsAWhI/AKQUbwc7BwhLNksK5Er+/27SYZn4UQwCbq954L5zVYHNCJzBLMvm4o8jlJuYjLME8KRYAu77/BWvJo5mkvUARKOJnso2nMdRxjnOQjHdVsM0TcSa6UBHK6LXQ6Gu4yDFH/jEd1VgZGq6ItyFLrwWnZKYrDumT1mnJ5LslVmY4BgsYFXwKpq8t4ZIXzGxtG8VooXDPiT1IsQAGXpDN51lA3SX3r25U6j2Q6B3M/yC67hAOMQVxlfOk6RZz9yAeEm45NWiTWj20KLOEFiVtw3Zb75rw3BVRm0bAy6yA6RcIUAhx52rLLc7zirrQuLZZfzHRNsCK4mgqOebvW8EE7m19P4JVTzZjGnNu0lxLr/+X8nRneBkBCQFLYuvTk8oBldhrkruiDjGwcL+Phic2elnk/mBIni6fWM5SITF+DXqW1sp+psN6KhfjpDLCsGs9KjVWjN3OYBQqidGxWZhRbwCOAjsi0NVDSQaS+duMZbGjqFdb3W+xMGVqJY0ND7mahm+NXY1bEsm9IV9LYvAw/bxTUMhF3LQAmhxN6r6K8X/ND+ddXv3CTYcZMsxUqkSIDlb/Ys0wyuqdZepNx67vNDwlO8ZoKkDovA5w5vlJXGv/PUy7JIehqWlyHf6IIuca1iN0VkKga/wZ1fQZDEYv9jDHIWJyh9INnUKA6PlcMDI3FVO4zOxB2lpYNfkFOcGDsFWhdqIxpZjVI62jCdbAFWPBu7LIK4U7Voz9S7LzRCQOp0w1GFSHHaJqrgAGjiA4+cZs0GZEAJbYgW6aaGG9N606vB3mKEbPKmBeDSqCa8Bt6U3hkgl/eC0uYXso3aDynuffQ6RREINr6C/mR16ePGvTtBnUurEBm1S4tuPzydduDg3D4Vwu4F+fXrjm9ILBDJUoug+WANVvcTG6H2MzH6GXT8i1Z3CuzLuQBK5amfNF0Vfap/Re3Pv4CSxNxz8DZopNlVSWBE18RiMAKqTjHnY5XRZsHSWrPnkes/YLk8rXysA+5l1D+fEVkLEz3bxunb/c0bIxWbsRGNPUNm8EmBE5w0P7Nmf3OiZhVmqfwH6s563rXsgQXEjtxTJg7ydrMpv7fMR6R93lNiiLUBO7PuX/EvNY6Zl7yI8N29ONmDkHMSBCSLSkkqE9/OOgECWNUx3pSLeeMTaiXV3njCOYj2R2wWsdIgp7cRhJZBnTP9rWS90WN81uzBXEbMZURIk7fsr627J7YFLJ6qEhQnxbZPUMieBZdNsWkEpkeBLDum+t91sdaEKMRKbcQR6T8q4MO+uulUCR1ADfuRCz+5cgrtEM3S4clJyZUZaqzHerf/D5HTc8unvZSppL7scAXijTsFMiX6oXHI3GDQ7+3bEnRwOubQHoN4CeawlnVr1oqGc2SrgbGOyVdYItQUWLGqEvBOnlg6X4PPYh5xRbhBE0RYncdSpPbN/FoFG5hZ4qu79KtUPmH5rnQtDiZuUJYiBRwXfPy/ynNghCZiHKD+/PvXP96zKFw2SyyRWSTeXRMQ0v1lSFri3nbyhUxwGgErAhaMLLpAB8Fq+R3S6/Zbzsonw2L7ZJLjUkmvpMjMqRxQaCvTrHcTsyoNOK0lxBWaiEWSW3MOeTwIUi6ACxBz/n8cqCFcpPQOdTdoLolwmXdmfP9qP8pBtvk8BsVJ7ZIojvKbM2PMHkwLY72YW+Nxgnv04Fu8SZ1xNFtoBsUGpRSy3qWmQecpcvYOBQWR0R/IisoIlttYupFIt8UjRITdFgm9NeCDYB946yw8Tpt6gf/nlKbSfk+9s9MkX81T+l4D1XUfdvgo8Dh/l4PYkK/ZIH2s1GD1RhO3BETYFtwgodccfoOpiKYSQlK4/3FcPfvNCXTskZCmuQ2dS/TPbM5CD+QnbDHQ3Ou98lIu86rFIrgEkX89RdEZ1cEpEA524fM4YQWQ0mOORmlLoU+GKwsQX44A2jUMsA6wdQb/+nxqK0x7ELFJE5u4n78mDM2KvVGRPk0YcNGqkNjGIBuI36rn2lO3bcqwJrT4NgMqIFt7h1DKsY5Wa60QpNIzAZShnq4OvzU/WmOeNkdFjfegz8BBpxtFNnBsiuRzqpVErpYDt+HDSxAmj43/abQ1KZ+uH5WPp5pWehEguZaMqcFdbvrEQ82aqvJAs4EmF7tYOqWFei2xJWR6sCucFbjbUfEAuNMq7aAua9DrW9q4nJ+arZ3lkrkKaWiz64kQ1QHZMO/aFdoFTWBlg1Mq/iS7iwX78nXv2bziWrGdjXbzLoZaeziktLCkgi43USW5ZrU+CFTkutJB5KkRX4D74kpo9Fho6KYxmP3gJvq2Fzhx8Q7Ep+p8UZA+fMyfbwXRiWBMKIOf4pm+x53TR58UKE8Sn2GCA6tf6OUuUwU3miTux6FmqOaaIaQnTYINiMbVORW/IoxnhyhrcX+Q4r0zkhLDTArbjzB3BYw2vznHRNEyXH7rWE3pZjVtNeV2ZwD+JuIQ5oEoF/26Y1ho3WvTi/I4K2mjYkaYLcTx5IFmvRkhlnPx7c73ma6DhAfDAnZeN12SBnfc0zabbUytZ5NSYuAaqzhDacvCFE7dqO19vdhlONn9vj+lo6k/oO5zHPPzcptbmAD4PcnJBdk1LPETNkNV7ZMVoBsoSbbHURNabd3HXGk4HZRMs76Odf1kY8Ku0pttlvUDZkpJoy5Dc3oRbNb4p4Fv6/UyOQ1Ei1CGZG8KqbET0YFzvRgCNwFDLO+QyoerDYe3/tN/OhjE7fyxV729uZj42AKfQjqjdVPMfQQ6Z/inRlvA5EvR2kjVcebGO7jWcyCOyo46W3Z17c8298PaZuW8mxxerewHJAeKSQ5EASAu0WgcUrJ5f8f746v5Es5G0y+lYwrZ2r/NHocs9d8agHqtPp0qiA3ajkfNhF1AknHGcnI45oDkxFh1xvcLYagaIcZHpyFrCxPzN4Lb/qKkTYey4mG4uEHfZk4G2aupJb14RJFDcodhG4kURfYhGBk6zZbbyLxebjMh8lHCVbM+Du/P9mSdGbE2rjZgiADJxaQz6JFHWE2wk8Jy1ZjihwY2XxjsVVfqZ/njaUSgUonmRCeRHU4db6IfOHA3R5QLG8A7zeZV+aoirFaOpJqE3nUSeT5TTEs+gZEtIJW77fwZN1/i54q2cmr2tTJZaeBgBRkHE8drHKakTLK6KnO4S0bD1krSuRlrPJQhGM7lHX1PqbRTiMk/Na59z2kvLllQRQTYWzZXRqAtvrVi39wiL7vGYC6Of6MlqjZKYN408emwuxyav1lLjJXG6m8KBFQLsAPXeN5w3MlUuyczYl6ixUOM1h6VE1HQfgZozxZR6PjT62iGzJofX3Fddj3iQXB1KUuBJBpfrfvJ481UABITygAMIB5TPqJU8Az7mkaqABCDpfKnENObe9/5H/5riZdNh8EvfjX6K5u3zVMsMGnYcokPSBsE7rlIBvmsA90v15I1ziUhz1O9PMbH+GpKLc6djbzQgkx4ibU35Bs7xhRF7o+tg0AWq/i8UyF845cYLfLA9cw5TTBwGmV2bWHyEArAJPOLjg4Uh8B9BW34AnP8GYPGDS/hMRnrOltU8g5j0bIu4UW2VvkML4tBH8m9tGtxrcUsOVyY+SSay/2mYGF/JlA182gcWNTie5sAsVRKt7Yy3Nv/Mek4ZoC4cNA03QB4uKj9S+Bv7HviAnrHDc/jJddQpsqv+PY+CWKVspm1j6Od6pb7BhkL73Z7jpknVtElVA34gkfxFkev5NU9qjd0324JSGtk6uc2u6RTSNkHINNyN5/EDw4Th5gXM24KkYQyp+Vl0Hq3+/VU9as6k4PAVgUDontdyTnySe3zht3/iqP1gKcod95muv3qPobQeMhDhDlMySyMvfsmtqaklG+XiqbswRATa1zRiGDeD0iohYTYbCASA1DnT/74So3hLRga/20NzYiWgSXAW7FTZv5ProM1v4N+RaGiLLmG+F97Cyte0LwVLgFo8RtpVgVQyqcEurWZD+rc/tY/uL/8dV4xtNfnb3kQIFP883665AmIM3+6FRlGG50rBWg6v1OL8fQSDJZwaFErivOFi9D5oi3pp3F+nEF7vBSIpOtrMr1shMetIixjRMeL75a/p4ei0mHxJZxi48oIY49ruY8Cl3yTan6ZtehlN7S3bYaIXDZ6CY5PzYS6fcCe+Nj6NqPTWpmZdiyME0aB3DMuThHlFoNKYSZvEIrXyxj8n8p5SchlxyY8BzS8AFTkfnaE/YIWUP75Jl4TZZtbrbtlFgSztaJV0LRpPYTJC815vzzWc9rdNUMYKRULa/+FHxjZnHOb+U16knX/5UlpAkTXgrCgrrngqPBXHmZT6DPlgxC2YCJhWwvrTACXsxW/cnc1flyVuj3ceTDtC3lvg4RlAiurmcWVADtDtVVEyHCnUaWW5obHusldRvnmMAsA60YKgGDzFFn4+wUJN+zvLNBWjak8hrNVsgfe8haUQM25FITiGHDt9tlKZLFjqddMv3/scKwtB6TQLuOpKSC7jV6gAVel62vCRaFDgxkxOm0aeHFEkP1TCfGjSi3OH3ieozBo8xLJO/2aUghOWLU/2QyTiZdXvfMDCtXxSIDSsWGYaWVBcKiqP+zDDQew6lvqAM04RcIsiUr9eKp9XOdcESg0AzBBWKQ7/pBDD26pEgWcOUeYMhX4R2vuoptl0+uB5yOjvEf4GLIgCzGfrpydd8U3lMPX+B3A0GSMgAwotfM5ASKzxcD+UxjLcxO+jK4/rrnD+nj40DEWeR7V3CjmSYh4xDI0/Mr/xRuJbzpgGfn+pvIM0+w5wvYQLMdGbaNyDB0cWwUJpybDCIDzpG7VZ4ouFXX+p3nO0xPU4p41Rg6S9xD45DoLYzS+XmHndbw3Py4QLpT0cG8VGEjObGgbZXEezYwF62NS0xegkcbioWEKZwRqWh5Gs+fbwcHFtebyeWijF4kFz9WpDfmD8FImPl3r/Twz2PQeHL0XxPg24eJ5xKGGw44ifcYORMQuCnHdRE9HXZ123QsRTLqEcG9OmkOuq+RxocCseuaNrqFVs5AFINsFSoObWDGDwD/kdm+VoPt3iGj6xAQpVKjrwbgE6vEUoh66eWHo1kyFZFB2I9u6BrV4uZRVJHDR1F2Fmpk1ALPwpQT+g8WLu/AhLeZC6uLUEH0f+cvlXAY/wUku9R84Fug8h0XQWPGh8mHv8VPIk9js/zP3NdvNVTQO+JzV4JubDerqk3chZbRK/h8vg7eSEBAefI7NDDa1NezKfB2gphOZA9HCJR5P5YsWIrEYZy25tkmrDYLt3ukHA712XZt0788s9p5RwGIfUwYiiQHtcw2b6/vjrTBuevK4YLC57ChpKdQ/gsMWUURjzJCHJ6Fpu4ZDcasS5hz+Sfhd5i3EqyC/gS5PGVpQvGR/DDbIBjI+xZNwdoqyb8m4R5m7kie/AIem7KP+TtFKaMa1K5E5AW5cE6IohRSgFfh32kFCK4z2pnHJxd1o5nFnGa+gNdcg4k3+0XLYZywm8F/yI3nYc46yW2zq77b9jNQrS+IRRHoPZhtTL9UjlvBDoUE++vM+0Alu4+YobDCMFLkMWwCnO66QQFhJIJ/ov4xP8dPvt2g7kCoeqQxlO+M6jtXwgDPK2S6zdc8mQ9UxJG1lqNpcKqsjVqAYaTv5cEIkEgFvElIbAMikX3b2FA1fR6mHcPHsWew//l6sbx17nKF/M6xaoMFcVOgWp/zBwTJkBzmmkqnvTGwH8RAZb917fxtVhy0SJlQCgkWX/Cun0z7E1w7FHU6unD70T7n4A3IVLlNt5P1jAxFxZdiBlrZwJB/ZfDR8ZyC0nCua+9Mh04c3SkBrcKlr7LZiyfAyMMuaky8LoXbDbmiyDQrcEyIqX4d9ECTePDcvrVgZrn8/0kqNEFAD0zEKzai23+vL5YFaJUD/WYky/0N/hp9SzcesaIo9wUUb3B9fs57aQq/tBn+Of8fUcDobOlkr2MW3h0yHlE7fTWfmmJ+WMT4v/695xBwChTWkLB96/n8cjdLO891+ktNRTiJ+hkHQAMFpP5UWA5SW6k3SZQoP1TONaY2Wsj0EsrBGQ1Te3antTjfDgNnDyrzJpT4Lgp25QzTNGqDhom3XGr18EWVGDj9273W9O7xl7OTXKtYv4yqHQq8uEtWwVKduBXyZuhCyj8xwyqmDtiOPKCgw67O6XdduNhyDQNLr/7mjrrMPi50TFxv8j5h5poo1uVYVaQv0cc83PaYZTyP+ywa2t3eOqVYwb0eAzikqmTs9OwQLX+NI/d3FJywshALKvsvrVlnQrfb/fqlKdR8N4xUawLWQj52Bktd2bjEpzcXoWmGOhyaNrgzhcrkKwgeR30NRbJx9WQlDnrRJ52N3JOXfq5hzGwzw/PI/9VF94D+w8cU8laaiE+8/tLHmOPuNRKWR6/OWpjbifScLwj1puRgdtiHGV+SBhqBY0EgOnGcO67yQi/DI75i/4R064yArHZVRk4ErKWIOrZW3LDYkYnkSFzKxHvv4IIJNX4rfmVL3ZNOGk5YNCV3tOfdmJO2R/jBkYlFtPpDRSheogFcPhQtp6oGLJSjM7aACwc0dbx+IBgtcnxLIxGa6T+WitF1Q/eDlST83SlfrzxhCwGgInFG8qJ0hypT4wsaMWkTAHCR1RvJU8Q5rBPka2JHUyZ0oL27wIdqV24tZUJl5WyYQ2dv/1ZE3en2lf4ZBTLMv2uiaWjZx333ADSsQO8Z5DXUvl9fQRVL1TGwvFykpJ4wFPynIekumYiPRJLMj53SKDvzYZahaHOchkSTv6rZ8PZy9G4Jz2b3JWw0B4ggI7mOiQRZid/wRxlimhUd1/10XIp2pKeoCOtJncrVZ6WlOnEIazN/Ysr5S6lUb9gHYOrSrc9m8Xa9pFu3mfaqZEcfPXLDUUO8FPqq6YRwcCcyJtRu9mBewwFR9Af34TXWhLzBKEl5AGb83G193wQFzrjj87itv7XBdk9vaX3EWwSMgLTe6ALgZZ99BCjoaXpV2PwxQpNw1qaxGISMvo38ou7Ui8UnyV4OjD6+Az4AKqk+pJVIUXRvFugQ9nTSqGVqASBgG66hPphuekJP3Tg4j18a7JRuiKNsAUSNDSSo4yZUxvzRN3EGX1S8s2u3J6yPzwqFvx1ODUzzi0Wa18ID/6byunEDO0SkDlm8X4ErqoErIWwfhD+TZfyR5pJzZ9bly87LTD3qf4+iLJnh3+cnegSvblNcdEFbKLTck1RErrZfpnrbNz4MAphfeqiFYGzPXlLeFL2WiYus3knDE28kmReBCSX+uTckQLfuFg5W9y4f0alHK95YqrwotKGC+YBApThtHqzDBgbBL05Wbs1Bl+p2WzHjMS2civKFL4HeMN0MV1LFllMQ3zOETHK8XBxEV7/LQ7K9WJetMeQMjbtDQY3pAuo4ZMqIxvme+vQ9ahREeZ5LwtA8//8QdXjtBNqdMsBfMMh6ziLfLMf7E2gz4wpsIlQsKc3KXeiCIMI5oDwjhyleUlk+4794kar3Dft7YloFjsI2ER7m0dCvmhHT4DkKr4AoiAAPsve7UjosbJoWtQp5STl17nbPJ7/hzluv3leWYLK981WDekbIxqporNfLrRwYAAWjCrBH/KCHL0t1uQiTrsf72bHg5Vu9rQh0aom11HYHKqhv2wFiRVj6Jq+5HEjxoegcejLUOqCamlw2hCmVMxrJsYQNOw1R++P+q2dSpzd952zSG8fBRcdwiorrgdhI7sUzLjWwvS6BfJA5PAfaouusLFtw8V4XojTpAwRHvjAVC37ha2FzkaewEgR1yGZAtYQaAbglMVM25r2uWyEJ6fKtHSIMgV7DUsLErfqzIJKVkeuWLxeJ8XG9WBxGbyBX2Y0TDKo7tEn1WkkFB/XigKr4NrFZG4OrK7B+vLlCZABG68d9d0715CIFLEOTv6DW5s+X4N1DRvUPacVKwZIulnP4mgAJCtASg0zOQHgAa3X8/Q9JU18n0+qxeVvEnqdMJ2KRyXrr7jPDkP4K3cS/GN55OEWQBfzpfItoS4ZyP3+z0Te2P0bBo66kVMlpubguufXkAr+PwNiUrHlQW2nwsIsNwVSgSsy5/pvr1H264BWQ1k+5KNxOaY3EVr8L5jeXnNM7L1BxrTxzpPojc8s+i5r/Gbfbj76W+Bokbhs28sVHkJkgF0c0bg5+2iXBeB3ERgorWsAH7VvrWnkUBhtu0k/UWDQQgeowYSzwF2LwCvsj/tmypr94LZ9zbjsvzX6FTVdT/Lbj4cm8JHHR0DVAcDqtACYKpvOW5lyyZNdxq2VmeQIX8Hg35AQCGHmymW9H5nR1FsidMH0JQ3Ko2m8Wn+e6gYCW1uEc1lHEb+VBoUMhanot0gn6ZWHtGpm2cSRwUysb/xVie/7yNJreR1QEqS9fwOrR8yKA//3/u7PRDQgvWzvfi6aBEDLqh8aX7h0c9JwIgPUWGHsPsx2J5ll6ULysr0HdGPH1GbGH+GSpD0I5VXU+4SCAW30CeJRUPXsqutD7n3uc9NRjaQu0vDWltd42RnY5RZbEzRUPPgE+n3ImDbRHFGhvWa94JSt9w/1KyZjbD802VEi3Ir2qmkRosK+QQGu5aOGmIpSApAplYePrzs31VaOCKR7UiEL7DV/pV2EmKW2RfcP1WvZZFhk2TI/3ErE2swmBgl/AGlojb32lzwVL0WmLbxvBulOuF5fck6s5ceJBKYC2K+ceFg5I4yM0NKLgNarGOQ+Dt8VRjOcrlmJbflyaEeL7Wso9fyt7UY1LK1bFj+d66et4E8JhW/7qMSOQ1fzriRKMp4mohuSwsJGWNZsgvSSbyCt9P+Qggwqq0l92rwS3ocxQVpAIMSexbMRHA4WlLqvnXU3W8HVY1l1SjIcK4KXjLLymchnM2c5er2PSdKj9sXJIs0PdOqNNNqJEDBuPZge41g50zQHhN+mRRXjHzTFp+8uM7NRjlc06pYaIaDesqwGiOZhw6HrIW4nYStFPFKardFQ8NVt9cbE/l2t1o15J4AdxAI9VZlf2er0NwKP6cdRP6zvucCyGoIGdHxBuWq9e9nFn+AXHFzXcYd+qgIqNxp2JDQ4BwnIPE87SRjYG0IAit49Dk17gVGjlKZG8IrvErOosU7YkLHX/02ZmeG+1SnF9ra2X/JyhK92p3rKKoGupi2Mmomder3HBMkuXvQ4d2WF9/iF6QO4iWu8YRVHgNrUMJOaReGZxUSYhVMw/bLIAc7vtRZQTiddlaQBBwV6LK0oMhlrD3YcNt5nMoQ7YfqoSWWgo9wikyHmOWcxPVen9Njsyba6NCv8nQCE8OkXay9S/ChK6ghNjUvGItxAU8DTxcix1JtQOxw/s3xeD378rtaO6CeD8l4DuIYy8Q9b5GU6vl20YRdqpFwMWmFK0J98aHrIu35n+O90aCf5ZoI8kctBPVrVlAkPWswEJw/gOYcJZTRJYJcyFqijZNW6pdckldintXwofpRQf6uWIoxub4SsQDKdxgxGRIQ7O442x8urtGuMpMAcMWGy06XZRn/BblQwof3WrWIaPUsM8DK0Mm5LtqMWmJFngEdoJtCchwZvooPXE6iGzwUazVZy6kfnskKAJBa+ZUpxdqdc0IlWfMzV16ypmMybp7UdNlQ5zojj6gZDOwFPLHDao7EU20WpNF1kd8pXOkWdvyye8JByc9HlQf4TlZERv9djuu6JvzAfSTOi4o9DBq4RjKx5RD1InN3cyd9WaxMe2TC7tOl7ug+ru/ZAxKlqk9h28XHMSXEp/vU0EP3vSPLxvIor853f2oMqFB8hQzugWRhaT5nRXx9Uxitseun7aS/ahB0cZmcIolGTjKl7arGdn8BT76bZZs/fDWmvotr5uoCldvuVAheMnJ9FRMGr5OtXhmWt7YSSkQVdiyCbc7msYeWYmTcsk5ZQqLSVA7jC+v2WyCYdH1PumG1IPJ+7ohy+TKUzLmNjpiKO5hH7nOoiJOS5npA+Oc+af/bXgKZMicCSRZQbw/JPVaSz8Smrnkt/gcXu4PcSQPhyxMt5O5J+dUdJh+ZSYbRa1DgJGP4QccPq7VRGj2L7SqB89SmtB+UC5VzLJWeWD5WwMPIEhT4OpmTPXJbx0G3kY0Emmo+QktpJQtiZkCZACgkclix24LKQCydTOhCyuFDUpbz1OItPxXa/syrfjLUB802oEFxgRzbM2Zi3rRKzrX+tYTDY4qKbiS6R/i4pI3xj6ajDz0QWGR8rzcWsxmMuR7aSs0RNRGI84qr453movLsgrT5RrpAK7Zi2POe3sBDmHEURiUT0fTuLpsGcjHQtX+Ogw05vxRp8UpNgaYhgDtPOMwRXtJz0nS6f6S6hiNV2Z/hG2oFDpkFaWaDQKykWPmHf0iNbAj0DF0DCc9SKY0ihBFDjLlsoFvuCwuiH2Z+W6hdNmH8SzdfGuVm+1+C0QXW5EHQUb7uOr9IsFmTDJK1eMH9cbeFZwyVwCPDDO1SqJDAN4t3ZoxUQBcahLEptUWx5Lf9h8d88SQ6JqHKPjzE99pldkQVVQicefZCQXiKPQkDOane4IiVXPkUyhsl7ElgYP3YPlIs7BcTZOKI+qik57diXsGh3M2K9RRXfdfjaFT55BUtuAWvIJHSHwS8X1Y+Gp1xtio1xCD9Yn8O1j7rzPcuOBRIWIIWC+GwVovQiXbY556giB7w4Oco9emLhNv2m3NZm96TSZFp7Db+AV4aKOoCAWh/ItukJT7J1SQ8ShFHYEW5UGS4KgMcHviQzfCv4lpGhFauDgWH4IlAtdYhLAujuuKBkZV2Rl8Tmd4etqiynbx8KzXXsWs/TqNcody4uxfBfi49TEILxSQeis7wXSaTSH8IehSOJpXIf9CNFONclauDcjJANrXskAj9bwUgWdGLgukGeMaJeMYFLxCA2NtoaoxsTKY2p1jER+oTN2se0ugzvxNC8wfPDllKWH04KFweYKH2xtfuidDUwQ4xMTSuKyYeEmUX9D+Kvl888C36kJYdcqW4QgcGk1vLuz8eqOGi5XTw3ohLgYrAl7mvoc4QAU41IcPJ6eK8nwgBlFErZrPe6cNDCzZ3sXEmXFzzJgy9r2+5RuHvaZZoQ+FljYGPtZEjT6iV1r5Q2ztfN1tCIAO11oKkcYDCpSsba8GtPX2A1RQpdz0OBRVHaDQjAu9vxNUrLg72LHrXKT5QQg9LQJtS+LvOJhte7a4d+f1xusherszhFqrkfRSJlL1+B7tdNQhkvv86Cnrbdwxw+ca7X+xkm9oTlZDMRVkWzrvKv1G++2QPVplYXRkoHUfrViMwXIndMHNP2Spf7VX1JinnONK3trA3ADrl3mvSdrNn02MUvCnUpB/xtGNPMhxmGLodlVv6KYrZ67iw2UtIKcFgBAaB0EMrtyAPv6zgDJhZR4LRVf7iKwJcZGKBYCAzFICXUt4NReKbZtR6A9+1QrEJxVJPH0j9BIDMDh16dJc11uk/WDYUGQNGS6z16WJwUH/jMBvYgvHFWHnforkpecX0oOlnQlTMFMRXwye6GB/ZFi3jOevKQe3U2TLY2AMRBGBjfzVKURtZnLhFfD3qq60dEvSu7ZEDzT2+nUz3Imag1s/3tXH/3I1F+5h2od5qnntS20Lo7AWwzjOP7voCRbLvXsm6i+91GjSQiUHiJ3xAuy0ervMFqeeuQ0ZJHPS89BvSRGsqgbdS/JjplnPYFWTYeg4vn+UZ1Dqyppjnwoqk8UsO5aGqz5J7bCXMNIcasg1zOkOAZYnra6UQU+W4on95yzLeivZvhZm4soNUay36w4kPbw0aRHhsfokO9Con0ac6jQbVW7zEAohKshDeapqtnxTh8XyCnM4sOXzKQ2Bq/JNaIO2yAEmgEwZomD38AWAgkCCxJeXhFPLOt/jHUDJg7szKcF/YP7bfIiOCucLRI+vY6lmWpBPkS3z45btVF5j0nDQEzJPOKVYHR50nVtpoEj99YvrlICf8fM5YbPYuyJWvNFD4s++IQNdzqkfWP4uqv2Xgdh+33Mjl9a3z11z76WoTowUZIPoZV6fMMzCUUyKOHP5WWUdYVlSeLvrRJWQnURTvnaD94/MV0uCHdIlz2vRzgOhjIiN+nDBfl27sZML9/WXRA7rmeKC95rXsSikrXfERUbODqR5qPOYPI29vsn7T29qxLNyyHXDpGvONS5+Y0kXYF2vfqMBZyQFjwVHI0oTkzrPaMrbqK2DAHiTIThVijedYQDI3n7ka2mJO3i5quNjxzsmzYjavMIY5vopKaADUNvE5A92TNqwzckZIfZuo5MDQp1uAlIAZjjsX5YAWz5jkqvklIzhjplORH9awQNvlpzfC+r5X9xR+irvh6SkJtabNDzbtZk3LfNIaiFbaexnd3BF0Veqyy1wcmxIQZ+IE74RH8OkkwHp9BVZilHNmjGSgYtJa/J6RYF+ju03ndUXjoJIwxA3evRS96uO83EjCFPCKH1kHW929tKzoyxX0butgrLv36Vf9YoUElnknR1CtOilhpfMc1EiqjwS0FTK9OznL2xsY6DJgsuq0L6kgBwOWQxelJS6Ujmz2XhewiadCaCeiTkAAbo4eRn1IC02UfFSsk4AxSpJevwN7pLV9bE/KYbqJkBTm4X9v4dhqC5/58ZqSz5B5InT7rmkbN/a+gsPU8nAVFTM+QzICxg91wB99yvM45utUyjRgjYIDMjCBm7JVSFhS+H02b7M3vKeZJIpRuzzifHQdfoJyJ0qro4IKGShToxn2nXoRj2UUuQ+8oRR49fBueMPfd6FLzpv21ZeuOh2NdX2RfmyYjHm2sx0QkDY0whgA5KWKv9L5IyyB+tD2xKfNFfM5mpE877dRe/5NOcs/g/v/XbzOEwmzbg017VXO+ezUTNPNsYppSy6943eseILYilfRoICvL4mf2e7rwO3YiJ91V/aLA5M4jJBhWzuEk6NvL8ublLGHbwxaczyRxVYM6sQsfAA32LNKsV1Bi9ATwSLxEscKdzQnVfT9kh9fuKOyiQKVq/GPgTQ4IpX3zBJR+WK5wV1E6FGMsJd7BR/n4jr37jo+3/BEbAinEjvssmo5zjHyhUmAoJtwyT20tGmdaackbxxiaNvLYhy6ZeWiBWEOlcPLEe7eYlYyvjikU9sARdyc6PITkLtOarnlx7Pub1yKJiO56a51hotPRP3akbbe+CCFGj5PsKM5mwmy41JdDMg9Fv5HqBzPZmlmE0IILmQ1AJyn4RpOLAWegaiWiCiyGaWnhUwsNGfH0VsCiYuulwk7RE42KbFxkgfisNAGuinKESKOMaIYrw8vhV6dK1jmic/xgLUsjtOqfW/vC1s17/yr+fBxWe8F74+PKkMIcybWPfo4JIejLvK+ZKTEQh+yf7B/wF49IIq3lzQ0dkrNfATtJNbVSEAkTbBMRC87sPxlch102uE1H2fnjTYElxqdX+D+s6GOrr9syDTzy3Q38VyToLSF43xiGpohNQ2/+5/7jz29TUG9ybgIAOd7BCnTQRYTMF67iJcDbUOzbqBePBAPazzQOKWnMwYYFdwv3+xpFp/Ag59E5/gMwbOfvtl1e34e1B0SyE5MxIGWcd7ynykCyLdCSrlaNx1hygbjc4AdroEV96GZRPsZa3t+Sdl6mh3KaQbzp/gEXaQLvZ7Engyiwjn55Usk8GcVmNIbLaER8pr5ageusDrD4tPmsj+a2i3chuU0l85ToNkRmKW1Lo5ZzUFMqbahbLVMpD0a8AkNkzpTQLiLGnOhpohQqb+oGWUCOae0U5nBRVUld2yF1ce0L5cvRwTyN+A9KfX2hUKBo9tu58nNfxlLtvAWxIsSi3ddfb4DZsY6/v1raIwYq8TqOkUwulOuUk5h+Ld5gvxeB42VUJdtf9n8ZowAV2e+hSR5L+nKXWVPsA0Q+Xb4kyKW3Zq/zC8VzUSuJPjEYgknX06Jy3I6dOVRVglSQAidlA/0V+qmD3lh5VxzZy+1LxN42Bkg0jGQ31azIB/F1DisEcSTB/6TZY/AqWttbu6N1tJhv0WdmBnTU1/KwcMFd3aT3qLTIBUyqh0rtG65vkZh2qsOm3jP83zudKuVLuPmL+w0ipy1X011NUrkEH+FHaWy2vPZ3nqg7xe6rqvRyQs6BJNwUiwG5NgFcmf6gp8YAr7CgcjcYzLwjQOY5cx17y+CE0jN5y6DeHClAqimbVIAPhMFjzWbG8jcaGo9ozx2Q6N+A7Ncxf9QEULBDiA7E3tcX7H7QFDGzTY4sYhniwLiUdTRyviekSF5ngx7Eg0y2XEotiqv9PvhwMEeNFTgtx5k12RiYg1wid1yfhV8XFO5LmJmNLT99cYHOngoR7XDzVPgIRhdf/krM/eH+/WrROO8SuTpWtfvrc1bqJGkgOp2z/VznO1mML5n6V82nSt3mqBr7IpNxOqJkxULhrwE1nnVDGMTfD3zyoltkr6cTwHD84tQJlNBj1uKc7HE2sKXW2FTud4ZAgMqZ+EoQuw1v19+57EIma1WKodqhHUdMICbifIX+/3wSJtIK0CigeCO7wChB2SlCe90V3LjB3in7FAExhsi23NlwC72uF0hWRaiQt0aXAVH0zbV3ONuMs8peAX712X2EqY9tuT2oYyNg5KqJmhlraXqyS/AD4jCLaJn/GyLF21r+mt5fCh9NIwR5KhJF1pEjMeEY0P4aRuZI9hthNc7ypbn2Ee21aaYHGHLC+OnSTJ23reIo9UGY9wT1sF1aTYo1T8+Sed2QY8hGIbToPe4/ZWCLMaZSyawnRdJ6NT97Y0wR/ySFqBRGtrmuy/aMz3/LwibHZXq1ZUHHGM7RgLu+fH7OPMq55n5tjFzt0Dc3P+qbgN51uISH7iSkk/qHtrPHoVsA98XSthM5OVbnek8mmX2wWDWgGF6dgKB4NMcUvz6NFOYVvbeLRo+9xLVqZZRQ7VTYWbZHpkSWcmlv7/r7cA7JgoQKAXQ20RVgUfNszLi3V7EKRN0eYWpWP6YDOhAv85r+ZAc2AjzIhl2m+wCGCexWCMMXTtvhA43bfzAbePrT9vDXVAHym0LZyJaO61E3iLEuR8ZSr4TJgUKbhhTwuJmueo9kgeYRF7mpGJoLM2kjlAtbMzEjp8aZyLO8Te2U3VFE7Q91nM18jZyJdYirMpIBXMpBdl5w+/b44wNroOr9kFCq3yMMrxiJRWY8v1OsfJzXdWA7LRI+GakZCy+8pYBv1WWZOgcriovd1Qc8KgTnTv/N66znLEn70CGjN9Ij3cDYY14Clcms2d3BeKccDK69pDduLr0MQ+FHsKuMxghlmDO9BuxlUJjLTdiz5fvFFfRfP5bd9XUZNjAGXY680QcQa6Sm5aWzM1WD5i2hu5whpKk5i1HxxqnQhnFb3tTBk+mFLjDbQuOnzmozModgaoPwX8JpP+oMoSiUfTqKa1e0LmGrhuYRAHlzRhJSuuXb/tvhURpjeCmztiNe09uzKyqzF4P/mb+3P8BXmlv2a/U28IvIgA5qVvVd3YWBAwfdxWlyEpSS79UbkrTlBFyhzoUTPJBHvfBF0KRP2DclocCBCmPVCyLVzMjSkKHNt0x7j/jr808T5MYYrnqFlclDgaCnJRwGzEJDGzV1wYjUtLdbLVujUmGwulzVASaV+QynncxrdjQzglCq0DtvdLL0T87ocxoUCdQV+wcCZ/62IsR1FwqouSz1hP1rtHU+ACEFTP8VCdH99GOumzWRqzxZF5DPm/eDQsBmHoIlujC1mAL7/S92NUot6VEROA/cl4al1Twj2JdVF6MTb84wps00id4VcfYpqrJ1ViwKiSGVjSxr3oA9IQUWOZAESpcteuyVPXe+2mGqrrBPDYquJaWUJUI0TXDbPtrpyvzqsm+c42FIJJoly4/gjJIkD7mxfsbzygX7g2Tbe8ugBgGe5/GBsprWqrJJFzpLt";
+    const SESSION_TOKEN_KEY = "ib.eval.copilot.session.dk";
+
+    let SESSIONS = [];
+    let GLOSSARY = [];
+    let EVIDENCE_RULES = [];
+    let DEMO_SAMPLES = {};
+    let appInitialized = false;
+
+    // Pure-JS FIPS 180-4 SHA-256 (works identically on https://, localhost, and file://)
+    const SHA256_K = new Uint32Array([
+      0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+      0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+      0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+      0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    ]);
+
+    function sha256Bytes(msgBytes) {
+      const l = msgBytes.length;
+      const bitHi = Math.floor((l * 8) / 0x100000000);
+      const bitLo = (l * 8) >>> 0;
+      const padLen = ((l + 9 + 63) & ~63);
+      const buf = new Uint8Array(padLen);
+      buf.set(msgBytes);
+      buf[l] = 0x80;
+      const dv = new DataView(buf.buffer);
+      dv.setUint32(padLen - 8, bitHi, false);
+      dv.setUint32(padLen - 4, bitLo, false);
+
+      let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a;
+      let h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+      const w = new Uint32Array(64);
+
+      for (let off = 0; off < padLen; off += 64) {
+        for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4, false);
+        for (let i = 16; i < 64; i++) {
+          const x = w[i - 15], y = w[i - 2];
+          const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+          const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+          w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+        }
+        let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+        for (let i = 0; i < 64; i++) {
+          const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+          const ch = (e & f) ^ ((~e) & g);
+          const t1 = (h + S1 + ch + SHA256_K[i] + w[i]) >>> 0;
+          const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+          const maj = (a & b) ^ (a & c) ^ (b & c);
+          const t2 = (S0 + maj) >>> 0;
+          h = g; g = f; f = e; e = (d + t1) >>> 0;
+          d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+        }
+        h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0;
+        h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0;
+      }
+      const out = new Uint8Array(32);
+      const odv = new DataView(out.buffer);
+      [h0,h1,h2,h3,h4,h5,h6,h7].forEach((v, idx) => odv.setUint32(idx * 4, v, false));
+      return out;
+    }
+
+    function bytesToHex(bytes) {
+      return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    function hexToBytes(hex) {
+      const arr = new Uint8Array(hex.length / 2);
+      for (let i = 0; i < arr.length; i++) arr[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+      return arr;
+    }
+
+    function deriveKeyFromPassword(pw) {
+      const enc = new TextEncoder();
+      let dk = sha256Bytes(enc.encode(AUTH_SALT + ":" + pw));
+      for (let i = 0; i < 1000; i++) dk = sha256Bytes(dk);
+      return dk;
+    }
+
+    function tryUnlockWithDerivedKey(dk) {
+      const vPrefix = new TextEncoder().encode("VERIFY:");
+      const vInput = new Uint8Array(vPrefix.length + dk.length);
+      vInput.set(vPrefix, 0);
+      vInput.set(dk, vPrefix.length);
+      if (bytesToHex(sha256Bytes(vInput)) !== AUTH_VERIFY_HEX) return false;
+
+      const binStr = atob(ENCRYPTED_PAYLOAD_B64);
+      const cipher = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) cipher[i] = binStr.charCodeAt(i);
+
+      const plain = new Uint8Array(cipher.length);
+      const totalBlocks = Math.ceil(cipher.length / 32);
+      const blkIn = new Uint8Array(36);
+      blkIn.set(dk, 0);
+      const blkDv = new DataView(blkIn.buffer);
+
+      for (let blk = 0; blk < totalBlocks; blk++) {
+        blkDv.setUint32(32, blk, false);
+        const ks = sha256Bytes(blkIn);
+        const sIdx = blk * 32;
+        const eIdx = Math.min(cipher.length, sIdx + 32);
+        for (let i = sIdx; i < eIdx; i++) plain[i] = cipher[i] ^ ks[i - sIdx];
+      }
+
+      const decoded = JSON.parse(new TextDecoder().decode(plain));
+      SESSIONS = decoded.SESSIONS;
+      GLOSSARY = decoded.GLOSSARY;
+      EVIDENCE_RULES = decoded.EVIDENCE_RULES;
+      DEMO_SAMPLES = decoded.DEMO_SAMPLES;
+      return true;
+    }
+
+    // =========================================================================
+    // 2. APPLICATION STATE & STORAGE (localStorage + pageVault paired safely)
+    // =========================================================================
+    const STORAGE_KEY = "pyoseon.eval.interpreter.v1";
+
+    const state = {
+      activeSessionId: "d1-lead",
+      activeRightTab: "copilot",
+      listeningLang: null, // 'KO' | 'EN' | null
+      isRecording: false,
+      isPausedRecording: false,
+      recSeconds: 0,
+      teleprompterStep: 1, // 0: small, 1: base, 2: large, 3: xlarge
+      settings: {
+        geminiApiKey: "",
+        orinLocale: "en-US"
+      },
+      utterancesBySession: {},
+      recordingsBySession: {}, // in-memory Blob URLs per session
+      currentCopilot: null
+    };
+
+    function initSessionBuckets() {
+      SESSIONS.forEach(s => {
+        if (!Array.isArray(state.utterancesBySession[s.id])) state.utterancesBySession[s.id] = [];
+        if (!Array.isArray(state.recordingsBySession[s.id])) state.recordingsBySession[s.id] = [];
+      });
+    }
+
+    function buildPersistPayload() {
+      return {
+        activeSessionId: state.activeSessionId,
+        teleprompterStep: state.teleprompterStep,
+        settings: {
+          geminiApiKey: state.settings.geminiApiKey,
+          orinLocale: state.settings.orinLocale
+        },
+        utterancesBySession: state.utterancesBySession
+      };
+    }
+
+    function applyPersistedPayload(saved) {
+      if (!saved || typeof saved !== "object") return;
+      if (saved.activeSessionId && state.utterancesBySession[saved.activeSessionId]) {
+        state.activeSessionId = saved.activeSessionId;
+      }
+      if (typeof saved.teleprompterStep === "number") {
+        state.teleprompterStep = Math.max(0, Math.min(3, saved.teleprompterStep));
+      }
+      if (saved.settings) {
+        state.settings.geminiApiKey = saved.settings.geminiApiKey || "";
+        state.settings.orinLocale = saved.settings.orinLocale || "en-US";
+      }
+      if (saved.utterancesBySession && typeof saved.utterancesBySession === "object") {
+        SESSIONS.forEach(s => {
+          if (Array.isArray(saved.utterancesBySession[s.id])) {
+            state.utterancesBySession[s.id] = saved.utterancesBySession[s.id];
+          }
+        });
+      }
+    }
+
+    function saveAppState() {
+      const payload = buildPersistPayload();
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      } catch (e) {}
+      try {
+        if (window.pageVault && typeof window.pageVault.save === "function") {
+          window.pageVault.save("app.state", payload);
+        }
+      } catch (e) {}
+    }
+
+    async function loadAppState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) applyPersistedPayload(JSON.parse(raw));
+      } catch (e) {}
+      try {
+        if (window.pageVault && typeof window.pageVault.load === "function") {
+          const vaultData = await window.pageVault.load("app.state");
+          if (vaultData) applyPersistedPayload(vaultData);
+        }
+      } catch (e) {}
+    }
+
+    // =========================================================================
+    // 3. REAL-TIME CO-PILOT ENGINE (3-Tier: Gemini API -> Hybrid HTTPS -> Offline)
+    // =========================================================================
+    function detectGlossaryHits(text) {
+      const low = text.toLowerCase();
+      return GLOSSARY.filter(item =>
+        item.triggers.some(t => low.includes(t.toLowerCase())) ||
+        low.includes(item.en.toLowerCase().slice(0, 12))
+      );
+    }
+
+    function detectEvidenceAlerts(text) {
+      const low = text.toLowerCase();
+      return EVIDENCE_RULES.filter(rule =>
+        rule.keywords.some(k => low.includes(k.toLowerCase()))
+      );
+    }
+
+    function buildOfflineFallback(speaker, rawText, hits) {
+      const trimmed = rawText.trim();
+      if (speaker === "KO") {
+        const termHints = hits.map(h => h.en).slice(0, 4);
+        const termClause = termHints.length
+          ? ` (specifically referencing ${termHints.join(", ")})`
+          : "";
+        return {
+          direction: "KO_TO_EN",
+          polishedScript: `The speaker explained their school practice${termClause}. Key terms to convey: ${termHints.length ? termHints.join(" / ") : "please check the live translation update"}.`,
+          conciseGist: termHints.length
+            ? `Summary point covering: ${termHints.join("; ")}.`
+            : "Conveying the stakeholder's response to Orin.",
+          sourceLabel: "내장 IB 도메인 분석 (실시간 번역 중...)"
+        };
+      } else {
+        const koHints = hits.map(h => h.ko).slice(0, 3);
+        const koClause = koHints.length ? ` (${koHints.join(", ")} 관련)` : "";
+        return {
+          direction: "EN_TO_KO",
+          polishedScript: `오린 선생님께서 말씀하신 부분${koClause}에 대해 학교 현장의 구체적인 운영 사례와 경험을 편안하게 들려주시면 감사하겠습니다.`,
+          conciseGist: `핵심 질문${koClause}: 표선고의 실제 운영 사례 공유 요청`,
+          sourceLabel: "내장 IB 도메인 분석 (실시간 번역 중...)"
+        };
+      }
+    }
+
+    function applyIbTerminologyPrePost(rawText, speaker, translated) {
+      let out = translated.trim();
+      if (speaker === "KO") {
+        const replacements = [
+          [/school life record|student life record/gi, "National Student Record"],
+          [/performance evaluation|performance test/gi, "internal performance assessment"],
+          [/autonomous school/gi, "Autonomous Public IB School"],
+          [/high school credit system/gi, "2022 National High School Credit System"],
+          [/expected score|predicted score/gi, "Predicted Grade (PG)"]
+        ];
+        replacements.forEach(([re, rep]) => { out = out.replace(re, rep); });
+        // Frame naturally for Orin if not already framed
+        const startsFramed = /^(they |the teacher|the coordinator|she |he |our school|at pyoseon|in our )/i.test(out);
+        const framed = startsFramed
+          ? out
+          : `They shared that ${out.charAt(0).toLowerCase()}${out.slice(1)}`;
+        const firstSentence = out.split(/(?<=[.!?])\s+/)[0] || out;
+        return {
+          polishedScript: framed,
+          conciseGist: `In short: ${firstSentence}`
+        };
+      } else {
+        const firstSentence = out.split(/(?<=[.!?다요])\s+/)[0] || out;
+        return {
+          polishedScript: out,
+          conciseGist: `요지: ${firstSentence}`
+        };
+      }
+    }
+
+    async function callGeminiCopilot(speaker, rawText, session) {
+      const apiKey = state.settings.geminiApiKey.trim();
+      if (!apiKey) return null;
+
+      const sysInstruction = speaker === "KO"
+        ? `You are an expert IB DP Programme Evaluation consecutive interpreter helping Programme Leader Wonsang Go interpret Korean school stakeholders at Pyoseon High School (061983, public IB World School in Jeju) into natural, idiomatic IB English for Evaluation Leader Orin Stephney. Current session: ${session.titleEn} (${session.pspFocus}). Return JSON with keys "polishedScript" (natural 1-3 sentence English script Wonsang can read aloud directly to Orin, using accurate IB terms like PLC, Autonomous Public IB School, 8-year extended tenure, National Student Record, Predicted Grades, ATT/ATL) and "conciseGist" (1-sentence ultra-concise English summary).`
+        : `You are an expert IB DP Programme Evaluation consecutive interpreter helping Programme Leader Wonsang Go interpret Evaluation Leader Orin Stephney's English remarks into warm, respectful, clear Korean (-습니다/-주셨습니다 polite tone, appreciative inquiry, never sounding like an audit) for Pyoseon High School teachers/parents/students. Current session: ${session.titleKo} (${session.pspFocus}). Return JSON with keys "polishedScript" (natural Korean script Wonsang can speak directly to the school participants) and "conciseGist" (1-sentence Korean core takeaway).`;
+
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: sysInstruction }] },
+            contents: [{ role: "user", parts: [{ text: rawText }] }],
+            generationConfig: {
+              temperature: 0.2,
+              responseMimeType: "application/json"
+            }
+          })
+        });
+        if (!resp.ok) throw new Error("Gemini status " + resp.status);
+        const data = await resp.json();
+        const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const parsed = JSON.parse(txt);
+        if (parsed && parsed.polishedScript) {
+          return {
+            polishedScript: parsed.polishedScript,
+            conciseGist: parsed.conciseGist || parsed.polishedScript,
+            sourceLabel: "Gemini 2.5 Flash 맥락 통역 완료"
+          };
+        }
+      } catch (err) {
+        return null;
+      }
+      return null;
+    }
+
+    async function callPublicTranslationFallback(speaker, rawText, hits) {
+      // Pre-inject glossary hints on complex Korean school terms for cleaner translation
+      let prepped = rawText;
+      if (speaker === "KO") {
+        prepped = prepped
+          .replace(/제주형\s*자율학교/g, "Jeju Autonomous Public IB School")
+          .replace(/고교학점제/g, "High School Credit System")
+          .replace(/생기부|학교생활기록부/g, "National Student Record")
+          .replace(/수행평가/g, "internal performance assessment")
+          .replace(/전문적\s*학습공동체/g, "Professional Learning Community (PLC)")
+          .replace(/융합탐구실천/g, "Interdisciplinary Inquiry and Practice course")
+          .replace(/글로컬\s*프로젝트/g, "Glocal CAS project")
+          .replace(/예측\s*점수/g, "Predicted Grades");
+      }
+
+      const langPair = speaker === "KO" ? "ko|en" : "en|ko";
+      const apiUrl = "https://api.mymemory.translated.net/get?q=" +
+        encodeURIComponent(prepped.slice(0, 480)) + "&langpair=" + encodeURIComponent(langPair);
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4500);
+      try {
+        const res = await fetch(apiUrl, { signal: controller.signal });
+        clearTimeout(timer);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const json = await res.json();
+        const trans = json?.responseData?.translatedText;
+        if (trans && typeof trans === "string" && !trans.includes("MYMEMORY WARNING")) {
+          const polished = applyIbTerminologyPrePost(rawText, speaker, trans);
+          return {
+            polishedScript: polished.polishedScript,
+            conciseGist: polished.conciseGist,
+            sourceLabel: "실시간 번역 + 표선고 IB 용어 보정 완료"
+          };
+        }
+      } catch (err) {
+        clearTimeout(timer);
+      }
+      return null;
+    }
+
+    async function processNewUtterance(speaker, rawText) {
+      const clean = rawText.trim();
+      if (!clean) return;
+
+      const session = getActiveSession();
+      const hits = detectGlossaryHits(clean);
+      const alerts = detectEvidenceAlerts(clean);
+      const fallback = buildOfflineFallback(speaker, clean, hits);
+
+      const now = new Date();
+      const timeStr = now.toTimeString().slice(0, 8);
+      const entry = {
+        id: "utt_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+        time: timeStr,
+        speaker: speaker,
+        rawText: clean,
+        polishedScript: fallback.polishedScript,
+        conciseGist: fallback.conciseGist,
+        sourceLabel: fallback.sourceLabel,
+        glossaryHits: hits,
+        evidenceAlerts: alerts,
+        bookmarked: false
+      };
+
+      state.utterancesBySession[state.activeSessionId].push(entry);
+      state.currentCopilot = entry;
+      renderTranscriptFeed(true);
+      renderCopilotPanel();
+      updateVaultBadge();
+      saveAppState();
+
+      // Upgrade asynchronously with Gemini API (Tier 1) or Hybrid HTTPS (Tier 2)
+      let upgraded = await callGeminiCopilot(speaker, clean, session);
+      if (!upgraded) {
+        upgraded = await callPublicTranslationFallback(speaker, clean, hits);
+      }
+      if (upgraded) {
+        entry.polishedScript = upgraded.polishedScript;
+        entry.conciseGist = upgraded.conciseGist;
+        entry.sourceLabel = upgraded.sourceLabel;
+        if (state.currentCopilot && state.currentCopilot.id === entry.id) {
+          renderCopilotPanel();
+        }
+        renderTranscriptFeed(false);
+        saveAppState();
+      }
+    }
+
+    // =========================================================================
+    // 4. WEB SPEECH API (Live Dual-Speaker Recognition)
+    // =========================================================================
+    let recognition = null;
+    let wantRestartStt = false;
+
+    function getSpeechRecognitionCtor() {
+      return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+    }
+
+    function stopSpeechRecognition() {
+      wantRestartStt = false;
+      state.listeningLang = null;
+      if (recognition) {
+        try { recognition.onend = null; recognition.stop(); } catch (e) {}
+        recognition = null;
+      }
+      document.getElementById("interimBanner").classList.add("hidden");
+      updateSpeakerButtonsUI();
+    }
+
+    function startSpeechRecognition(targetSpeaker) {
+      const Ctor = getSpeechRecognitionCtor();
+      if (!Ctor) {
+        showToast("현재 브라우저 환경에서는 음성인식 대신 하단 실시간 입력창을 사용해 주세요.");
+        document.getElementById("manualSpeakerSelect").value = targetSpeaker;
+        document.getElementById("manualTextInput").focus();
+        return;
+      }
+
+      if (state.listeningLang === targetSpeaker && recognition) {
+        stopSpeechRecognition();
+        return;
+      }
+
+      // Cleanly tear down previous recognizer before switching language
+      if (recognition) {
+        wantRestartStt = false;
+        try { recognition.onend = null; recognition.stop(); } catch (e) {}
+        recognition = null;
+      }
+
+      state.listeningLang = targetSpeaker;
+      wantRestartStt = true;
+      updateSpeakerButtonsUI();
+
+      const rec = new Ctor();
+      rec.lang = targetSpeaker === "KO" ? "ko-KR" : (state.settings.orinLocale || "en-US");
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+
+      rec.onstart = () => {
+        const label = targetSpeaker === "KO"
+          ? "표선고 한국어 발화 실시간 인식 중 (ko-KR)..."
+          : `Orin 영어 발화 실시간 인식 중 (${rec.lang})...`;
+        document.getElementById("interimSpeakerLabel").textContent = label;
+        document.getElementById("sttNoticeText").textContent = label;
+      };
+
+      rec.onresult = (event) => {
+        let interim = "";
+        let finalChunk = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalChunk += transcript + " ";
+          } else {
+            interim += transcript;
+          }
+        }
+
+        const banner = document.getElementById("interimBanner");
+        if (interim.trim()) {
+          banner.classList.remove("hidden");
+          document.getElementById("interimTextDisplay").textContent = interim;
+          // Instant live glossary preview while speaker is still talking!
+          const liveHits = detectGlossaryHits(interim);
+          const liveAlerts = detectEvidenceAlerts(interim);
+          if (liveHits.length || liveAlerts.length) {
+            renderLiveInterimHints(targetSpeaker, interim, liveHits, liveAlerts);
+          }
+        } else {
+          banner.classList.add("hidden");
+        }
+
+        if (finalChunk.trim()) {
+          banner.classList.add("hidden");
+          processNewUtterance(targetSpeaker, finalChunk.trim());
+        }
+      };
+
+      rec.onerror = (ev) => {
+        if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
+          wantRestartStt = false;
+          state.listeningLang = null;
+          updateSpeakerButtonsUI();
+          showToast("마이크 권한이 차단되어 있습니다. 브라우저 주소창에서 마이크를 허용하거나 하단 입력창을 활용하세요.");
+        }
+      };
+
+      rec.onend = () => {
+        if (wantRestartStt && state.listeningLang === targetSpeaker) {
+          setTimeout(() => {
+            if (wantRestartStt && state.listeningLang === targetSpeaker) {
+              try { rec.start(); } catch (e) {}
+            }
+          }, 180);
+        }
+      };
+
+      recognition = rec;
+      try {
+        rec.start();
+      } catch (e) {
+        stopSpeechRecognition();
+        showToast("음성인식을 시작할 수 없습니다. 하단 실시간 입력창을 이용해 주세요.");
+      }
+    }
+
+    function renderLiveInterimHints(speaker, interimText, hits, alerts) {
+      if (hits.length) {
+        const chipsEl = document.getElementById("copilotGlossaryChips");
+        chipsEl.innerHTML = hits.map(h =>
+          `<button type="button" data-copy="${escapeHtml(h.en)}" class="copy-chip px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 border border-teal-300 text-xs font-semibold text-teal-900 transition">${escapeHtml(h.ko)} &rarr; <span class="font-bold">${escapeHtml(h.en)}</span></button>`
+        ).join("");
+      }
+      if (alerts.length) {
+        renderEvidenceAlertsHTML(alerts);
+      }
+    }
+
+    // =========================================================================
+    // 5. PER-MEETING AUDIO RECORDER (MediaRecorder + Web Audio Level Meter)
+    // =========================================================================
+    let mediaRecorder = null;
+    let audioStream = null;
+    let recordedChunks = [];
+    let recIntervalId = null;
+    let audioCtx = null;
+    let analyserNode = null;
+    let meterAnimId = null;
+
+    function formatDuration(sec) {
+      const m = String(Math.floor(sec / 60)).padStart(2, "0");
+      const s = String(sec % 60).padStart(2, "0");
+      return `${m}:${s}`;
+    }
+
+    function stopMeterLoop() {
+      if (meterAnimId) {
+        cancelAnimationFrame(meterAnimId);
+        meterAnimId = null;
+      }
+      const canvas = document.getElementById("audioMeterCanvas");
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      if (audioCtx) {
+        try { audioCtx.close(); } catch (e) {}
+        audioCtx = null;
+        analyserNode = null;
+      }
+    }
+
+    function startMeterLoop(stream) {
+      stopMeterLoop();
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        audioCtx = new AC();
+        const src = audioCtx.createMediaStreamSource(stream);
+        analyserNode = audioCtx.createAnalyser();
+        analyserNode.fftSize = 64;
+        src.connect(analyserNode);
+
+        const canvas = document.getElementById("audioMeterCanvas");
+        const ctx = canvas.getContext("2d");
+        const dataArr = new Uint8Array(analyserNode.frequencyBinCount);
+
+        function draw() {
+          if (!analyserNode) return;
+          meterAnimId = requestAnimationFrame(draw);
+          analyserNode.getByteFrequencyData(dataArr);
+          ctx.fillStyle = "#0f172a";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          const bars = 9;
+          const barW = 4;
+          const gap = 2;
+          for (let i = 0; i < bars; i++) {
+            const val = dataArr[i * 2] || 0;
+            const h = Math.max(2, Math.round((val / 255) * (canvas.height - 2)));
+            ctx.fillStyle = state.isPausedRecording ? "#f59e0b" : "#10b981";
+            ctx.fillRect(2 + i * (barW + gap), canvas.height - h - 1, barW, h);
+          }
+        }
+        draw();
+      } catch (e) {}
+    }
+
+    async function toggleMeetingRecording() {
+      if (state.isRecording) {
+        stopMeetingRecording();
+        return;
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showToast("이 브라우저 환경에서는 마이크 녹음이 지원되지 않습니다. 크롬 새 탭에서 열어 주세요.");
+        return;
+      }
+      try {
+        const sessionSnapshotId = state.activeSessionId;
+        const sessionSnapshot = getActiveSession();
+        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        recordedChunks = [];
+        const mimeCandidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+        let chosenMime = "";
+        if (window.MediaRecorder && typeof MediaRecorder.isTypeSupported === "function") {
+          chosenMime = mimeCandidates.find(m => MediaRecorder.isTypeSupported(m)) || "";
+        }
+        mediaRecorder = chosenMime
+          ? new MediaRecorder(audioStream, { mimeType: chosenMime })
+          : new MediaRecorder(audioStream);
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = () => {
+          const finalMime = mediaRecorder.mimeType || "audio/webm";
+          const blob = new Blob(recordedChunks, { type: finalMime });
+          const url = URL.createObjectURL(blob);
+          const ext = finalMime.includes("mp4") ? "m4a" : "webm";
+          const takeNum = state.recordingsBySession[sessionSnapshotId].length + 1;
+          const safeTitle = sessionSnapshot.titleKo.replace(/[^가-힣a-zA-Z0-9_-]/g, "_");
+          const recordItem = {
+            id: "rec_" + Date.now(),
+            sessionId: sessionSnapshotId,
+            sessionTitle: `${sessionSnapshot.day} ${sessionSnapshot.time} ${sessionSnapshot.titleKo}`,
+            filename: `표선고평가_${sessionSnapshotId}_${safeTitle}_녹음${takeNum}.${ext}`,
+            timestamp: new Date().toLocaleTimeString("ko-KR", { hour12: false }),
+            durationStr: formatDuration(state.recSeconds),
+            sizeKB: Math.max(1, Math.round(blob.size / 1024)),
+            url: url
+          };
+          state.recordingsBySession[sessionSnapshotId].push(recordItem);
+          state.recSeconds = 0;
+          document.getElementById("recTimer").textContent = "00:00";
+          updateVaultBadge();
+          renderVaultModalContents();
+          showToast(`녹음 저장 완료: ${recordItem.filename} ([녹음·북마크]에서 다운로드 가능)`);
+        };
+
+        mediaRecorder.start(1000);
+        state.isRecording = true;
+        state.isPausedRecording = false;
+        state.recSeconds = 0;
+        if (recIntervalId) clearInterval(recIntervalId);
+        recIntervalId = setInterval(() => {
+          if (!state.isPausedRecording) {
+            state.recSeconds += 1;
+            document.getElementById("recTimer").textContent = formatDuration(state.recSeconds);
+          }
+        }, 1000);
+
+        startMeterLoop(audioStream);
+        updateRecorderUI();
+        showToast(`[${sessionSnapshot.titleKo}] 미팅 녹음을 시작했습니다.`);
+      } catch (err) {
+        showToast("마이크 접근이 거부되었거나 사용할 수 없습니다. 브라우저 마이크 권한을 확인해 주세요.");
+      }
+    }
+
+    function pauseResumeMeetingRecording() {
+      if (!state.isRecording || !mediaRecorder) return;
+      try {
+        if (mediaRecorder.state === "recording") {
+          mediaRecorder.pause();
+          state.isPausedRecording = true;
+          showToast("녹음 일시정지됨");
+        } else if (mediaRecorder.state === "paused") {
+          mediaRecorder.resume();
+          state.isPausedRecording = false;
+          showToast("녹음 재개됨");
+        }
+        updateRecorderUI();
+      } catch (e) {}
+    }
+
+    function stopMeetingRecording() {
+      if (recIntervalId) {
+        clearInterval(recIntervalId);
+        recIntervalId = null;
+      }
+      state.isRecording = false;
+      state.isPausedRecording = false;
+      stopMeterLoop();
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        try { mediaRecorder.stop(); } catch (e) {}
+      }
+      if (audioStream) {
+        audioStream.getTracks().forEach(t => t.stop());
+        audioStream = null;
+      }
+      updateRecorderUI();
+    }
+
+    // =========================================================================
+    // 6. UI RENDERING & HELPERS
+    // =========================================================================
+    function escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function getActiveSession() {
+      return SESSIONS.find(s => s.id === state.activeSessionId) || SESSIONS[0];
+    }
+
+    function copyTextToClipboard(text, label) {
+      if (!text) return;
+      const done = () => showToast(`${label || "텍스트"} 복사 완료!`);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+      } else {
+        fallbackCopy(text, done);
+      }
+    }
+
+    function fallbackCopy(text, cb) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); if (cb) cb(); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+
+    let toastTimer = null;
+    function showToast(msg) {
+      const box = document.getElementById("toastBox");
+      box.textContent = msg;
+      box.classList.remove("hidden");
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => box.classList.add("hidden"), 3200);
+    }
+
+    function renderSessionSelector() {
+      const sel = document.getElementById("sessionSelect");
+      const groups = {};
+      SESSIONS.forEach(s => {
+        if (!groups[s.day]) groups[s.day] = [];
+        groups[s.day].push(s);
+      });
+      sel.innerHTML = Object.entries(groups).map(([day, list]) => {
+        const opts = list.map(s =>
+          `<option value="${s.id}" ${s.id === state.activeSessionId ? "selected" : ""}>[${s.time}] ${escapeHtml(s.titleKo)}</option>`
+        ).join("");
+        return `<optgroup label="${escapeHtml(day)}">${opts}</optgroup>`;
+      }).join("");
+    }
+
+    function renderSessionContextBar() {
+      const s = getActiveSession();
+      document.getElementById("sessionMetaLocation").textContent = `장소: ${s.location}`;
+      document.getElementById("sessionMetaParticipants").textContent = `참석: ${s.participants}`;
+      document.getElementById("sessionMetaPsp").textContent = s.pspFocus;
+    }
+
+    function updateSpeakerButtonsUI() {
+      const btnKo = document.getElementById("btnListenKo");
+      const btnEn = document.getElementById("btnListenEn");
+      const pillKo = document.getElementById("statusPillKo");
+      const pillEn = document.getElementById("statusPillEn");
+
+      btnKo.classList.toggle("pulse-ring-ko", state.listeningLang === "KO");
+      btnKo.classList.toggle("border-emerald-600", state.listeningLang === "KO");
+      pillKo.textContent = state.listeningLang === "KO" ? "수신 중" : "대기";
+      pillKo.className = state.listeningLang === "KO"
+        ? "px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white"
+        : "px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-emerald-700 border border-emerald-200";
+
+      btnEn.classList.toggle("pulse-ring-en", state.listeningLang === "EN");
+      btnEn.classList.toggle("border-indigo-600", state.listeningLang === "EN");
+      pillEn.textContent = state.listeningLang === "EN" ? "수신 중" : "대기";
+      pillEn.className = state.listeningLang === "EN"
+        ? "px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-600 text-white"
+        : "px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-indigo-700 border border-indigo-200";
+    }
+
+    function updateRecorderUI() {
+      const dot = document.getElementById("recDot");
+      const btn = document.getElementById("btnRecToggle");
+      const label = document.getElementById("recBtnLabel");
+      const pauseBtn = document.getElementById("btnRecPause");
+
+      if (state.isRecording) {
+        dot.className = state.isPausedRecording
+          ? "w-2.5 h-2.5 rounded-full bg-amber-400"
+          : "w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping";
+        btn.className = "px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-rose-300 border border-rose-500/40 transition flex items-center gap-1";
+        label.textContent = "녹음 저장";
+        pauseBtn.classList.remove("hidden");
+        pauseBtn.textContent = state.isPausedRecording ? "재개" : "일시정지";
+      } else {
+        dot.className = "w-2.5 h-2.5 rounded-full bg-slate-500";
+        btn.className = "px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white transition flex items-center gap-1";
+        label.textContent = "미팅 녹음";
+        pauseBtn.classList.add("hidden");
+      }
+    }
+
+    function renderTranscriptFeed(scrollToBottom) {
+      const feed = document.getElementById("transcriptFeed");
+      const list = state.utterancesBySession[state.activeSessionId] || [];
+
+      if (!list.length) {
+        const s = getActiveSession();
+        feed.innerHTML = `
+          <div class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500 space-y-2">
+            <div class="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold text-sm">STT</div>
+            <p class="text-sm font-bold text-slate-700">[${escapeHtml(s.titleKo)}] 실시간 대화 스트림이 비어 있습니다</p>
+            <p class="text-xs max-w-md leading-relaxed">상단 <strong>[표선고 한국어 듣기]</strong> 또는 <strong>[Orin 영어 듣기]</strong>를 클릭해 마이크 인식을 시작하거나, 상단 <strong>+ 시연 버튼</strong> 또는 하단 입력창으로 테스트해 보세요.</p>
+          </div>
+        `;
+        return;
+      }
+
+      feed.innerHTML = list.map(u => {
+        const isKo = u.speaker === "KO";
+        const activeRing = state.currentCopilot && state.currentCopilot.id === u.id
+          ? "ring-2 ring-teal-500"
+          : "";
+        const cardStyle = isKo
+          ? "border-emerald-200 bg-emerald-50/50"
+          : "border-indigo-200 bg-indigo-50/50";
+        const badgeStyle = isKo
+          ? "bg-emerald-700 text-white"
+          : "bg-indigo-700 text-white";
+        const badgeLabel = isKo ? "표선고 (한국어)" : "Orin (English)";
+        const starClass = u.bookmarked
+          ? "bg-amber-400 text-slate-900 font-bold"
+          : "bg-white hover:bg-slate-100 text-slate-500 border border-slate-200";
+
+        return `
+          <article data-utt-id="${u.id}" class="utt-card rounded-xl border p-3 transition cursor-pointer ${cardStyle} ${activeRing}">
+            <div class="flex items-center justify-between gap-2 mb-1.5">
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded text-[10px] font-bold ${badgeStyle}">${badgeLabel}</span>
+                <span class="text-[11px] font-mono text-slate-400">${escapeHtml(u.time)}</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <button type="button" data-action="focus" data-id="${u.id}" class="px-2 py-0.5 rounded text-[11px] font-semibold bg-white hover:bg-teal-50 text-teal-800 border border-slate-200">프롬프터 표시</button>
+                <button type="button" data-action="bookmark" data-id="${u.id}" class="px-2 py-0.5 rounded text-[11px] transition ${starClass}">${u.bookmarked ? "★ 증거 저장됨" : "☆ 북마크"}</button>
+                <button type="button" data-action="delete" data-id="${u.id}" class="px-1.5 py-0.5 rounded text-[11px] text-slate-400 hover:text-rose-600">삭제</button>
+              </div>
+            </div>
+            <p class="text-xs sm:text-sm font-semibold text-slate-900 leading-relaxed mb-1.5">${escapeHtml(u.rawText)}</p>
+            <div class="rounded-lg bg-white/90 border border-slate-200/80 px-2.5 py-2 text-xs text-slate-700">
+              <span class="font-bold ${isKo ? "text-indigo-700" : "text-emerald-700"}">${isKo ? "EN 통역 추천:" : "KR 통역 추천:"}</span>
+              ${escapeHtml(u.polishedScript)}
+            </div>
+          </article>
+        `;
+      }).join("");
+
+      if (scrollToBottom) {
+        feed.scrollTop = feed.scrollHeight;
+      }
+    }
+
+    function renderEvidenceAlertsHTML(alerts) {
+      const listEl = document.getElementById("copilotEvidenceList");
+      if (!alerts || !alerts.length) {
+        listEl.innerHTML = `<p class="text-amber-900/80">현재 발화와 직접 충돌하거나 추가 보충이 필요한 특이 문서 쟁점이 없습니다.</p>`;
+        return;
+      }
+      listEl.innerHTML = alerts.map(a => `
+        <div class="rounded-lg bg-white/90 border border-amber-200 p-2.5">
+          <div class="flex items-center justify-between gap-2 mb-0.5">
+            <strong class="text-amber-950 font-bold">${escapeHtml(a.title)}</strong>
+            <a href="${escapeHtml(a.url)}" target="_blank" rel="noopener noreferrer" class="text-[11px] font-bold text-teal-700 underline shrink-0">원본 열기 &nearr;</a>
+          </div>
+          <p class="text-slate-700">${escapeHtml(a.detail)}</p>
+        </div>
+      `).join("");
+    }
+
+    function applyTeleprompterScale() {
+      const sizes = ["text-sm sm:text-base", "text-base sm:text-lg", "text-lg sm:text-xl", "text-xl sm:text-2xl"];
+      const el = document.getElementById("copilotMainScript");
+      el.className = `${sizes[state.teleprompterStep]} font-semibold text-slate-900 leading-relaxed select-all`;
+    }
+
+    function renderCopilotPanel() {
+      applyTeleprompterScale();
+      const cur = state.currentCopilot;
+      if (!cur) return;
+
+      const isKoToEn = cur.speaker === "KO";
+      const banner = document.getElementById("copilotDirectionBanner");
+      const badge = document.getElementById("copilotDirectionBadge");
+      const title = document.getElementById("copilotDirectionTitle");
+
+      if (isKoToEn) {
+        banner.className = "rounded-xl p-3.5 bg-gradient-to-r from-indigo-800 to-teal-800 text-white flex items-center justify-between gap-2";
+        badge.textContent = "KR (표선고) -> EN (Orin에게 영어로 통역)";
+        title.textContent = "Orin에게 지금 영어로 이렇게 전달하세요";
+      } else {
+        banner.className = "rounded-xl p-3.5 bg-gradient-to-r from-emerald-800 to-slate-800 text-white flex items-center justify-between gap-2";
+        badge.textContent = "EN (Orin) -> KR (학교 측에 한국어로 통역)";
+        title.textContent = "표선고 참석자분들께 이렇게 한국어로 통역하세요";
+      }
+
+      document.getElementById("copilotEngineSource").textContent = cur.sourceLabel || "";
+      document.getElementById("copilotMainScript").textContent = cur.polishedScript;
+      document.getElementById("copilotGistScript").textContent = cur.conciseGist;
+
+      const chipsEl = document.getElementById("copilotGlossaryChips");
+      if (cur.glossaryHits && cur.glossaryHits.length) {
+        chipsEl.innerHTML = cur.glossaryHits.map(h =>
+          `<button type="button" data-copy="${escapeHtml(isKoToEn ? h.en : h.ko)}" class="copy-chip px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 border border-teal-300 text-xs font-semibold text-teal-900 transition" title="${escapeHtml(h.tip)}">${escapeHtml(h.ko)} &rarr; <span class="font-bold">${escapeHtml(h.en)}</span></button>`
+        ).join("");
+      } else {
+        chipsEl.innerHTML = `<span class="text-xs text-slate-400">특수 공립고·IB 제도 용어 없음 (일반 맥락 통역)</span>`;
+      }
+
+      renderEvidenceAlertsHTML(cur.evidenceAlerts);
+    }
+
+    function renderSessionQuestionsTab() {
+      const s = getActiveSession();
+      const checkBox = document.getElementById("sessionChecklistBox");
+      checkBox.innerHTML = `
+        <div class="rounded-xl border border-slate-200 bg-white p-3.5">
+          <div class="text-xs font-bold text-slate-800 mb-2">[${escapeHtml(s.titleKo)}] 필수 확인 체크포인트</div>
+          <ul class="space-y-1.5 text-xs text-slate-700 list-disc pl-4">
+            ${s.checklist.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+          </ul>
+        </div>
+      `;
+
+      const promptsBox = document.getElementById("sessionPromptsList");
+      promptsBox.innerHTML = s.prompts.map((p, idx) => `
+        <div class="rounded-xl border border-teal-200 bg-teal-50/40 p-3.5 space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <span class="px-2 py-0.5 rounded bg-teal-700 text-white text-[11px] font-bold">${escapeHtml(p.tag)}</span>
+            <div class="flex items-center gap-1.5">
+              <button type="button" data-prompt-idx="${idx}" data-prompt-lang="EN" class="load-prompt-btn px-2.5 py-1 rounded-lg bg-indigo-700 hover:bg-indigo-600 text-white text-[11px] font-semibold">EN 프롬프터 띄우기</button>
+              <button type="button" data-prompt-idx="${idx}" data-prompt-lang="KO" class="load-prompt-btn px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-[11px] font-semibold">KR 프롬프터 띄우기</button>
+            </div>
+          </div>
+          <p class="text-xs sm:text-sm font-semibold text-slate-900"><strong>KR:</strong> ${escapeHtml(p.ko)}</p>
+          <p class="text-xs sm:text-sm font-medium text-indigo-950"><strong>EN:</strong> ${escapeHtml(p.en)}</p>
+        </div>
+      `).join("");
+    }
+
+    function renderGlossaryTab(query = "") {
+      const q = query.trim().toLowerCase();
+      const filtered = GLOSSARY.filter(g =>
+        !q ||
+        g.ko.toLowerCase().includes(q) ||
+        g.en.toLowerCase().includes(q) ||
+        g.tip.toLowerCase().includes(q)
+      );
+      const container = document.getElementById("glossaryTableContainer");
+      container.innerHTML = filtered.map(g => `
+        <div class="rounded-xl border border-slate-200 bg-white p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:border-teal-400 transition">
+          <div>
+            <div class="text-xs sm:text-sm font-bold text-slate-900">${escapeHtml(g.ko)}</div>
+            <div class="text-xs sm:text-sm font-semibold text-teal-800">${escapeHtml(g.en)}</div>
+            <div class="text-[11px] text-slate-500 mt-0.5">${escapeHtml(g.tip)}</div>
+          </div>
+          <button type="button" data-copy="${escapeHtml(g.en)}" class="copy-chip self-start sm:self-center px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-teal-100 text-xs font-semibold text-slate-700 shrink-0">영문 복사</button>
+        </div>
+      `).join("");
+    }
+
+    function updateVaultBadge() {
+      let totalRecs = 0;
+      let totalStars = 0;
+      SESSIONS.forEach(s => {
+        totalRecs += (state.recordingsBySession[s.id] || []).length;
+        totalStars += (state.utterancesBySession[s.id] || []).filter(u => u.bookmarked).length;
+      });
+      document.getElementById("vaultCountBadge").textContent = String(totalRecs + totalStars);
+    }
+
+    function renderVaultModalContents() {
+      const recContainer = document.getElementById("recordingsListContainer");
+      const allRecs = [];
+      SESSIONS.forEach(s => {
+        (state.recordingsBySession[s.id] || []).forEach(r => allRecs.push(r));
+      });
+
+      if (!allRecs.length) {
+        recContainer.innerHTML = `<p class="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">아직 저장된 미팅 녹음 파일이 없습니다. 상단 [미팅 녹음] 버튼을 눌러 세션별 음성을 기록하세요.</p>`;
+      } else {
+        recContainer.innerHTML = allRecs.map(r => `
+          <div class="rounded-xl border border-slate-200 bg-slate-50 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="min-w-0">
+              <div class="text-xs font-bold text-slate-900 truncate">${escapeHtml(r.sessionTitle)}</div>
+              <div class="text-[11px] text-slate-500">저장 시각: ${escapeHtml(r.timestamp)} &middot; 길이: ${escapeHtml(r.durationStr)} &middot; 약 ${r.sizeKB} KB</div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <audio controls src="${r.url}" class="h-8 w-44"></audio>
+              <a href="${r.url}" download="${escapeHtml(r.filename)}" class="px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-600 text-white text-xs font-semibold">다운로드</a>
+            </div>
+          </div>
+        `).join("");
+      }
+
+      const starContainer = document.getElementById("bookmarksListContainer");
+      const allStars = [];
+      SESSIONS.forEach(s => {
+        (state.utterancesBySession[s.id] || []).forEach(u => {
+          if (u.bookmarked) allStars.push({ session: s, utt: u });
+        });
+      });
+
+      if (!allStars.length) {
+        starContainer.innerHTML = `<p class="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg p-3">대화 카드 우측의 [☆ 북마크]를 누르면 Day 2 평가 보고서(Section B/D/E)에 인용할 핵심 증거 발화가 이곳에 모입니다.</p>`;
+      } else {
+        starContainer.innerHTML = allStars.map(({ session, utt }) => `
+          <div class="rounded-xl border border-amber-200 bg-amber-50/50 p-3 space-y-1">
+            <div class="flex items-center justify-between text-[11px] text-amber-900 font-bold">
+              <span>[${escapeHtml(session.day)} ${escapeHtml(session.titleKo)}] ${utt.speaker === "KO" ? "표선고 발화" : "Orin 발화"} (${escapeHtml(utt.time)})</span>
+              <span>${escapeHtml(session.pspFocus)}</span>
+            </div>
+            <p class="text-xs font-semibold text-slate-900">${escapeHtml(utt.rawText)}</p>
+            <p class="text-xs text-slate-700"><strong>통역/영문 근거:</strong> ${escapeHtml(utt.polishedScript)}</p>
+          </div>
+        `).join("");
+      }
+    }
+
+    function downloadMarkdownFile(filename, content) {
+      const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+
+    function exportCurrentSessionMarkdown() {
+      const s = getActiveSession();
+      const list = state.utterancesBySession[s.id] || [];
+      const lines = [
+        `# [표선고 061983 평가방문 회의록] ${s.day} ${s.time} — ${s.titleKo}`,
+        `- **장소:** ${s.location}`,
+        `- **참석:** ${s.participants}`,
+        `- **관련 기준:** ${s.pspFocus}`,
+        ``,
+        `## 실시간 발화 및 통역 기록 (${list.length}건)`
+      ];
+      if (!list.length) {
+        lines.push(`- 기록된 발화가 없습니다.`);
+      } else {
+        list.forEach((u, idx) => {
+          const mark = u.bookmarked ? " [★ 핵심 증거]" : "";
+          lines.push(`### ${idx + 1}. ${u.speaker === "KO" ? "표선고 (KR)" : "Orin (EN)"} (${u.time})${mark}`);
+          lines.push(`- **원문:** ${u.rawText}`);
+          lines.push(`- **통역 스크립트:** ${u.polishedScript}`);
+          lines.push(`- **1문장 요지:** ${u.conciseGist}`);
+          lines.push(``);
+        });
+      }
+      downloadMarkdownFile(`표선고평가_${s.id}_회의록.md`, lines.join("\n"));
+      showToast("현재 세션 마크다운 회의록을 다운로드했습니다.");
+    }
+
+    function exportAllBookmarksMarkdown() {
+      const lines = [
+        `# 표선고등학교 (061983) 평가 보고서 작성용 ★ 핵심 증거 발화 모음`,
+        `- 생성 시각: ${new Date().toLocaleString("ko-KR")}`,
+        ``
+      ];
+      let count = 0;
+      SESSIONS.forEach(s => {
+        const stars = (state.utterancesBySession[s.id] || []).filter(u => u.bookmarked);
+        if (stars.length) {
+          lines.push(`## [${s.day} ${s.time}] ${s.titleKo} (${s.pspFocus})`);
+          stars.forEach(u => {
+            count += 1;
+            lines.push(`- **(${u.time}) ${u.speaker === "KO" ? "학교 측" : "Orin"}:** ${u.rawText}`);
+            lines.push(`  - **Report-ready English / 통역:** ${u.polishedScript}`);
+          });
+          lines.push(``);
+        }
+      });
+      if (!count) {
+        lines.push(`북마크(★) 표시된 발화가 아직 없습니다.`);
+      }
+      downloadMarkdownFile(`표선고평가_061983_보고서증거팩.md`, lines.join("\n"));
+      showToast("보고서 증거팩(.md)을 다운로드했습니다.");
+    }
+
+    function updateEngineStatusBadge() {
+      const hasKey = Boolean(state.settings.geminiApiKey && state.settings.geminiApiKey.trim());
+      const dot = document.getElementById("engineBadgeDot");
+      const txt = document.getElementById("engineBadgeText");
+      if (hasKey) {
+        dot.className = "w-2 h-2 rounded-full bg-teal-300";
+        txt.textContent = "Gemini 2.5 Pro 모드";
+      } else {
+        dot.className = "w-2 h-2 rounded-full bg-emerald-400";
+        txt.textContent = "하이브리드 코파일럿";
+      }
+    }
+
+    function switchRightTab(tabName) {
+      state.activeRightTab = tabName;
+      ["copilot", "questions", "glossary"].forEach(t => {
+        document.getElementById("rtab-" + t).classList.toggle("hidden", t !== tabName);
+      });
+      document.querySelectorAll(".rtab-btn").forEach(btn => {
+        const active = btn.dataset.rtab === tabName;
+        btn.className = active
+          ? "rtab-btn px-3 py-2 text-xs sm:text-sm font-bold border-b-2 border-teal-700 text-teal-800 whitespace-nowrap"
+          : "rtab-btn px-3 py-2 text-xs sm:text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-800 whitespace-nowrap";
+      });
+    }
+
+    // =========================================================================
+    // 7. EVENT LISTENERS & INITIALIZATION
+    // =========================================================================
+    function bindEvents() {
+      document.getElementById("sessionSelect").addEventListener("change", (e) => {
+        state.activeSessionId = e.target.value;
+        const list = state.utterancesBySession[state.activeSessionId] || [];
+        state.currentCopilot = list.length ? list[list.length - 1] : null;
+        renderSessionContextBar();
+        renderTranscriptFeed(true);
+        renderSessionQuestionsTab();
+        if (state.currentCopilot) renderCopilotPanel();
+        saveAppState();
+      });
+
+      document.getElementById("btnListenKo").addEventListener("click", () => startSpeechRecognition("KO"));
+      document.getElementById("btnListenEn").addEventListener("click", () => startSpeechRecognition("EN"));
+      document.getElementById("btnStopStt").addEventListener("click", () => {
+        stopSpeechRecognition();
+        document.getElementById("sttNoticeText").textContent = "음성인식 대기 중";
+      });
+
+      document.querySelectorAll(".sim-chip").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const key = btn.dataset.sim;
+          const sample = DEMO_SAMPLES[key];
+          if (sample) {
+            switchRightTab("copilot");
+            processNewUtterance(sample.speaker, sample.text);
+          }
+        });
+      });
+
+      document.getElementById("manualInputForm").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const input = document.getElementById("manualTextInput");
+        const speaker = document.getElementById("manualSpeakerSelect").value;
+        const val = input.value.trim();
+        if (!val) return;
+        input.value = "";
+        switchRightTab("copilot");
+        processNewUtterance(speaker, val);
+      });
+
+      document.getElementById("transcriptFeed").addEventListener("click", (e) => {
+        const actionBtn = e.target.closest("[data-action]");
+        const list = state.utterancesBySession[state.activeSessionId] || [];
+        if (actionBtn) {
+          const id = actionBtn.dataset.id;
+          const act = actionBtn.dataset.action;
+          const item = list.find(u => u.id === id);
+          if (!item) return;
+          if (act === "focus") {
+            state.currentCopilot = item;
+            switchRightTab("copilot");
+            renderCopilotPanel();
+            renderTranscriptFeed(false);
+          } else if (act === "bookmark") {
+            item.bookmarked = !item.bookmarked;
+            renderTranscriptFeed(false);
+            updateVaultBadge();
+            saveAppState();
+          } else if (act === "delete") {
+            state.utterancesBySession[state.activeSessionId] = list.filter(u => u.id !== id);
+            renderTranscriptFeed(false);
+            updateVaultBadge();
+            saveAppState();
+          }
+          return;
+        }
+        const card = e.target.closest(".utt-card");
+        if (card) {
+          const item = list.find(u => u.id === card.dataset.uttId);
+          if (item) {
+            state.currentCopilot = item;
+            switchRightTab("copilot");
+            renderCopilotPanel();
+            renderTranscriptFeed(false);
+          }
+        }
+      });
+
+      document.querySelectorAll(".rtab-btn").forEach(btn => {
+        btn.addEventListener("click", () => switchRightTab(btn.dataset.rtab));
+      });
+
+      document.getElementById("btnFontUp").addEventListener("click", () => {
+        state.teleprompterStep = Math.min(3, state.teleprompterStep + 1);
+        applyTeleprompterScale();
+        saveAppState();
+      });
+
+      document.getElementById("btnFontDown").addEventListener("click", () => {
+        state.teleprompterStep = Math.max(0, state.teleprompterStep - 1);
+        applyTeleprompterScale();
+        saveAppState();
+      });
+
+      document.getElementById("btnCopyScript").addEventListener("click", () => {
+        const txt = document.getElementById("copilotMainScript").textContent;
+        copyTextToClipboard(txt, "통역 스크립트");
+      });
+
+      document.getElementById("btnCopyGist").addEventListener("click", () => {
+        const txt = document.getElementById("copilotGistScript").textContent;
+        copyTextToClipboard(txt, "1문장 핵심 요지");
+      });
+
+      document.getElementById("btnSpeakScript").addEventListener("click", () => {
+        if (!window.speechSynthesis) {
+          showToast("이 브라우저에서는 음성 합성(TTS)을 지원하지 않습니다.");
+          return;
+        }
+        window.speechSynthesis.cancel();
+        const txt = document.getElementById("copilotMainScript").textContent;
+        const utt = new SpeechSynthesisUtterance(txt);
+        const isKoToEn = !state.currentCopilot || state.currentCopilot.speaker === "KO";
+        utt.lang = isKoToEn ? "en-US" : "ko-KR";
+        utt.rate = 0.98;
+        window.speechSynthesis.speak(utt);
+      });
+
+      document.body.addEventListener("click", (e) => {
+        const chip = e.target.closest(".copy-chip");
+        if (chip && chip.dataset.copy) {
+          copyTextToClipboard(chip.dataset.copy, `"${chip.dataset.copy}"`);
+        }
+        const loadBtn = e.target.closest(".load-prompt-btn");
+        if (loadBtn) {
+          const s = getActiveSession();
+          const p = s.prompts[Number(loadBtn.dataset.promptIdx)];
+          const lang = loadBtn.dataset.promptLang;
+          if (p) {
+            state.currentCopilot = {
+              id: "preset_" + Date.now(),
+              speaker: lang === "EN" ? "KO" : "EN",
+              polishedScript: lang === "EN" ? p.en : p.ko,
+              conciseGist: lang === "EN" ? `KR 원문: ${p.ko}` : `EN 원문: ${p.en}`,
+              sourceLabel: `세션 맞춤 질문 (${p.tag})`,
+              glossaryHits: detectGlossaryHits(p.ko + " " + p.en),
+              evidenceAlerts: detectEvidenceAlerts(p.ko + " " + p.en)
+            };
+            switchRightTab("copilot");
+            renderCopilotPanel();
+            showToast("선택한 질문이 프롬프터에 크게 표시되었습니다.");
+          }
+        }
+      });
+
+      document.getElementById("glossarySearchInput").addEventListener("input", (e) => {
+        renderGlossaryTab(e.target.value);
+      });
+
+      // Audio Recorder controls
+      document.getElementById("btnRecToggle").addEventListener("click", toggleMeetingRecording);
+      document.getElementById("btnRecPause").addEventListener("click", pauseResumeMeetingRecording);
+
+      // Modals
+      document.getElementById("btnOpenVault").addEventListener("click", () => {
+        renderVaultModalContents();
+        document.getElementById("vaultModal").classList.remove("hidden");
+      });
+      document.getElementById("btnCloseVault").addEventListener("click", () => {
+        document.getElementById("vaultModal").classList.add("hidden");
+      });
+      document.getElementById("btnExportSessionMd").addEventListener("click", exportCurrentSessionMarkdown);
+      document.getElementById("btnExportAllBookmarksMd").addEventListener("click", exportAllBookmarksMarkdown);
+
+      document.getElementById("btnOpenSettings").addEventListener("click", () => {
+        document.getElementById("inputGeminiKey").value = state.settings.geminiApiKey || "";
+        document.getElementById("selectOrinAccent").value = state.settings.orinLocale || "en-US";
+        document.getElementById("settingsModal").classList.remove("hidden");
+      });
+      document.getElementById("btnCloseSettings").addEventListener("click", () => {
+        document.getElementById("settingsModal").classList.add("hidden");
+      });
+      document.getElementById("btnClearApiKey").addEventListener("click", () => {
+        document.getElementById("inputGeminiKey").value = "";
+      });
+      document.getElementById("btnSaveSettings").addEventListener("click", () => {
+        state.settings.geminiApiKey = document.getElementById("inputGeminiKey").value.trim();
+        state.settings.orinLocale = document.getElementById("selectOrinAccent").value;
+        updateEngineStatusBadge();
+        saveAppState();
+        document.getElementById("settingsModal").classList.add("hidden");
+        showToast("설정이 저장되었습니다.");
+      });
+
+      // Keyboard Shortcuts (Alt+1 Korean, Alt+2 Orin English, Alt+S Stop)
+      window.addEventListener("keydown", (e) => {
+        if (e.altKey && e.key === "1") {
+          e.preventDefault();
+          startSpeechRecognition("KO");
+        } else if (e.altKey && e.key === "2") {
+          e.preventDefault();
+          startSpeechRecognition("EN");
+        } else if (e.altKey && (e.key === "s" || e.key === "S")) {
+          e.preventDefault();
+          stopSpeechRecognition();
+        }
+      });
+    }
+
+    async function launchUnlockedWorkspace() {
+      document.getElementById("authLockOverlay").classList.add("hidden");
+      document.getElementById("brandCodeBadge").textContent = "061983";
+      document.getElementById("brandTitleText").textContent = "표선고 실시간 통역 & PL 코파일럿";
+      document.getElementById("brandSubText").textContent = "EL: Orin Stephney · PL/통역: 고원상 · 2026.11.15–17";
+      document.title = "표선고(061983) IB 평가방문 실시간 통역 & PL 코파일럿";
+
+      initSessionBuckets();
+      await loadAppState();
+      renderSessionSelector();
+      renderSessionContextBar();
+      renderTranscriptFeed(false);
+      renderSessionQuestionsTab();
+      renderGlossaryTab("");
+      updateEngineStatusBadge();
+      updateVaultBadge();
+      applyTeleprompterScale();
+
+      const existing = state.utterancesBySession[state.activeSessionId] || [];
+      if (existing.length) {
+        state.currentCopilot = existing[existing.length - 1];
+        renderCopilotPanel();
+      }
+      if (!appInitialized) {
+        bindEvents();
+        appInitialized = true;
+      }
+      if (window.lucide && typeof window.lucide.createIcons === "function") {
+        window.lucide.createIcons();
+      }
+    }
+
+    function lockWorkspace() {
+      stopSpeechRecognition();
+      try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch (e) {}
+      document.getElementById("authPasswordInput").value = "";
+      document.getElementById("authErrorMsg").classList.add("hidden");
+      document.getElementById("authLockOverlay").classList.remove("hidden");
+      document.getElementById("authPasswordInput").focus();
+      showToast("화면이 잠겼습니다.");
+    }
+
+    function setupAuthGate() {
+      const form = document.getElementById("authUnlockForm");
+      const pwInput = document.getElementById("authPasswordInput");
+      const errMsg = document.getElementById("authErrorMsg");
+      const visBtn = document.getElementById("btnTogglePwVis");
+      const lockBtn = document.getElementById("btnLockApp");
+
+      visBtn.addEventListener("click", () => {
+        const isPw = pwInput.type === "password";
+        pwInput.type = isPw ? "text" : "password";
+        visBtn.textContent = isPw ? "숨김" : "표시";
+      });
+
+      lockBtn.addEventListener("click", lockWorkspace);
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const val = pwInput.value;
+        const dk = deriveKeyFromPassword(val);
+        if (tryUnlockWithDerivedKey(dk)) {
+          errMsg.classList.add("hidden");
+          if (document.getElementById("authRememberSession").checked) {
+            try { sessionStorage.setItem(SESSION_TOKEN_KEY, bytesToHex(dk)); } catch (err) {}
+          }
+          await launchUnlockedWorkspace();
+          showToast("잠금이 해제되었습니다.");
+        } else {
+          errMsg.classList.remove("hidden");
+          pwInput.select();
+        }
+      });
+
+      // Auto-restore if already unlocked in this tab session
+      try {
+        const savedHex = sessionStorage.getItem(SESSION_TOKEN_KEY);
+        if (savedHex && savedHex.length === 64) {
+          const dk = hexToBytes(savedHex);
+          if (tryUnlockWithDerivedKey(dk)) {
+            launchUnlockedWorkspace();
+            return;
+          }
+        }
+      } catch (e) {}
+      setTimeout(() => pwInput.focus(), 100);
+    }
+
+    window.addEventListener("DOMContentLoaded", setupAuthGate);
+  </script>
+</body>
+</html>
