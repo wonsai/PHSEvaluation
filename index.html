@@ -404,7 +404,7 @@
         <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 space-y-1">
           <div class="font-bold text-slate-800">현장 사용 꿀팁</div>
           <p>1. 크롬(Chrome)이나 엣지(Edge) 브라우저에서 마이크 권한을 허용하면 실시간 음성인식과 미팅 녹음이 동시에 작동합니다.</p>
-          <p>2. [미팅 녹음]을 켜 둔 채로 [한국어 듣기]와 [Orin 영어 듣기]를 수시로 전환해도 녹음 파일은 끊기지 않고 한 파일로 깨끗하게 이어집니다.</p>
+          <p>2. <strong>녹음 중 동시 대본 필수 팁:</strong> 위에 <strong>Gemini API 키</strong>를 저장해 두시면 기기 마이크 충돌 없이 하나의 마이크로 <strong>(1) 전체 미팅 녹음 + (2) 한국어/Orin 영어 자동 구분 실시간 대본 + (3) 통역 스크립트 추천</strong>이 동시에 작동합니다!</p>
         </div>
 
         <div class="flex justify-end gap-2 pt-2">
@@ -434,7 +434,6 @@
     let DEMO_SAMPLES = {};
     let appInitialized = false;
 
-    // Pure-JS FIPS 180-4 SHA-256 (works identically on https://, localhost, and file://)
     const SHA256_K = new Uint32Array([
       0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
       0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
@@ -852,6 +851,17 @@
     }
 
     function startSpeechRecognition(targetSpeaker) {
+      // If currently recording with Gemini Live Audio Engine, speaker buttons set optional hint without opening a conflicting 2nd mic!
+      if (state.isRecording && hasGeminiKey()) {
+        state.listeningLang = state.listeningLang === targetSpeaker ? null : targetSpeaker;
+        updateSpeakerButtonsUI();
+        const modeTxt = state.listeningLang === "KO"
+          ? "녹음 + AI 대본 (표선고 한국어 우선 힌트)"
+          : (state.listeningLang === "EN" ? "녹음 + AI 대본 (Orin 영어 우선 힌트)" : "녹음 + AI 한/영 완전 자동 감지 중");
+        document.getElementById("sttNoticeText").textContent = modeTxt;
+        showToast(modeTxt);
+        return;
+      }
       const Ctor = getSpeechRecognitionCtor();
       if (!Ctor) {
         showToast("현재 브라우저 환경에서는 음성인식 대신 하단 실시간 입력창을 사용해 주세요.");
@@ -927,7 +937,13 @@
           wantRestartStt = false;
           state.listeningLang = null;
           updateSpeakerButtonsUI();
-          showToast("마이크 권한이 차단되어 있습니다. 브라우저 주소창에서 마이크를 허용하거나 하단 입력창을 활용하세요.");
+          showToast("마이크 권한이 차단되어 있습니다. 브라우저 주소창에서 마이크를 허용해 주세요.");
+        } else if (ev.error === "audio-capture" || (state.isRecording && ev.error === "aborted")) {
+          wantRestartStt = false;
+          state.listeningLang = null;
+          updateSpeakerButtonsUI();
+          document.getElementById("sttNoticeText").textContent = "기기 마이크 동시점유 제한 감지 -> 우측 상단 [설정]에 Gemini API 키 입력 시 해결!";
+          showToast("현재 기기에서 녹음 중 기본 음성인식이 제한됩니다. 우측 상단 [설정]에 Gemini API 키를 넣으시면 녹음+자동대본이 동시에 작동합니다!");
         }
       };
 
@@ -963,15 +979,31 @@
     }
 
     // =========================================================================
-    // 5. PER-MEETING AUDIO RECORDER (MediaRecorder + Web Audio Level Meter)
+    // 5. UNIFIED AUDIO RECORDER + SIMULTANEOUS LIVE TRANSCRIPTION ENGINE
+    //    - Mode A (Gemini API Key set): Single Mic Stream -> Full Recorder + VAD Chunk Recorder -> Gemini 2.5 Flash Audio (Zero OS mic conflict, auto KR/EN detection!)
+    //    - Mode B (No API Key): Full Recorder + Auto-started WebSpeech STT (with OS mic-lock detection)
     // =========================================================================
     let mediaRecorder = null;
+    let vadChunkRecorder = null;
+    let vadChunks = [];
     let audioStream = null;
     let recordedChunks = [];
     let recIntervalId = null;
+    let vadWatchIntervalId = null;
     let audioCtx = null;
     let analyserNode = null;
     let meterAnimId = null;
+
+    // VAD state for Gemini Live Audio Chunking
+    let vadSegmentStartMs = 0;
+    let vadHasSpeech = false;
+    let vadLastVoiceMs = 0;
+    let vadInFlightCount = 0;
+    let currentRmsLevel = 0;
+
+    function hasGeminiKey() {
+      return Boolean(state.settings.geminiApiKey && state.settings.geminiApiKey.trim());
+    }
 
     function formatDuration(sec) {
       const m = String(Math.floor(sec / 60)).padStart(2, "0");
@@ -984,6 +1016,10 @@
         cancelAnimationFrame(meterAnimId);
         meterAnimId = null;
       }
+      if (vadWatchIntervalId) {
+        clearInterval(vadWatchIntervalId);
+        vadWatchIntervalId = null;
+      }
       const canvas = document.getElementById("audioMeterCanvas");
       if (canvas) {
         const ctx = canvas.getContext("2d");
@@ -994,6 +1030,7 @@
         audioCtx = null;
         analyserNode = null;
       }
+      currentRmsLevel = 0;
     }
 
     function startMeterLoop(stream) {
@@ -1002,26 +1039,41 @@
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) return;
         audioCtx = new AC();
-        const src = audioCtx.createMediaStreamSource(stream);
+        const srcNode = audioCtx.createMediaStreamSource(stream);
         analyserNode = audioCtx.createAnalyser();
-        analyserNode.fftSize = 64;
-        src.connect(analyserNode);
+        analyserNode.fftSize = 256;
+        srcNode.connect(analyserNode);
 
         const canvas = document.getElementById("audioMeterCanvas");
         const ctx = canvas.getContext("2d");
-        const dataArr = new Uint8Array(analyserNode.frequencyBinCount);
+        const freqArr = new Uint8Array(analyserNode.frequencyBinCount);
+        const timeArr = new Uint8Array(analyserNode.fftSize);
 
         function draw() {
           if (!analyserNode) return;
           meterAnimId = requestAnimationFrame(draw);
-          analyserNode.getByteFrequencyData(dataArr);
+          analyserNode.getByteFrequencyData(freqArr);
+          analyserNode.getByteTimeDomainData(timeArr);
+
+          // Compute RMS voice energy for VAD
+          let sumSq = 0;
+          for (let i = 0; i < timeArr.length; i++) {
+            const norm = (timeArr[i] - 128) / 128;
+            sumSq += norm * norm;
+          }
+          currentRmsLevel = Math.sqrt(sumSq / timeArr.length);
+          if (currentRmsLevel > 0.022 && state.isRecording && !state.isPausedRecording) {
+            vadHasSpeech = true;
+            vadLastVoiceMs = Date.now();
+          }
+
           ctx.fillStyle = "#0f172a";
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           const bars = 9;
           const barW = 4;
           const gap = 2;
           for (let i = 0; i < bars; i++) {
-            const val = dataArr[i * 2] || 0;
+            const val = freqArr[i * 3] || 0;
             const h = Math.max(2, Math.round((val / 255) * (canvas.height - 2)));
             ctx.fillStyle = state.isPausedRecording ? "#f59e0b" : "#10b981";
             ctx.fillRect(2 + i * (barW + gap), canvas.height - h - 1, barW, h);
@@ -1029,6 +1081,156 @@
         }
         draw();
       } catch (e) {}
+    }
+
+    function blobToBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const res = String(reader.result || "");
+          const comma = res.indexOf(",");
+          resolve(comma >= 0 ? res.slice(comma + 1) : res);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    async function transcribeAndInterpretAudioChunk(blob, mimeType) {
+      const apiKey = state.settings.geminiApiKey.trim();
+      if (!apiKey || blob.size < 1800) return;
+
+      vadInFlightCount += 1;
+      const banner = document.getElementById("interimBanner");
+      banner.classList.remove("hidden");
+      document.getElementById("interimSpeakerLabel").textContent = "녹음 오디오에서 AI 실시간 대본·통역 추출 중 (한/영 자동감지)...";
+      document.getElementById("interimTextDisplay").textContent = "발화 구간을 분석해 대본과 통역 스크립트를 생성하고 있습니다...";
+
+      try {
+        const b64Audio = await blobToBase64(blob);
+        const session = getActiveSession();
+        const cleanMime = (mimeType || "audio/webm").split(";")[0];
+        const forcedHint = state.listeningLang === "KO"
+          ? "Speaker hint: likely Korean stakeholder (unless clearly speaking English)."
+          : (state.listeningLang === "EN" ? "Speaker hint: likely Orin speaking English (unless clearly speaking Korean)." : "Auto-detect whether the speaker is speaking Korean ('KO') or English ('EN').");
+
+        const sysPrompt = `You are a real-time IB DP Programme Evaluation consecutive interpreter at Pyoseon High School (061983, public IB school in Jeju). Current session: ${session.titleKo} / ${session.titleEn} (${session.pspFocus}). Listen to this live meeting audio clip.
+1. If there is NO clear human speech (only silence, typing, coughing, or background noise), return {"empty": true}.
+2. Otherwise return {"empty": false, "speaker": "KO" or "EN", "rawText": "exact verbatim transcript in spoken language", "polishedScript": "if speaker is KO -> natural 1-3 sentence idiomatic IB English script for Evaluation Leader Orin Stephney; if speaker is EN -> warm, polite Korean (-습니다/-주셨습니다) interpretation for Pyoseon school stakeholders", "conciseGist": "1-sentence ultra-concise summary in target language"}. ${forcedHint}`;
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: sysPrompt }] },
+            contents: [{
+              role: "user",
+              parts: [
+                { inlineData: { mimeType: cleanMime, data: b64Audio } },
+                { text: "Transcribe and interpret this audio segment." }
+              ]
+            }],
+            generationConfig: {
+              temperature: 0.15,
+              responseMimeType: "application/json"
+            }
+          })
+        });
+
+        if (resp.ok) {
+          const data = await resp.json();
+          const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          const parsed = JSON.parse(txt);
+          if (parsed && !parsed.empty && parsed.rawText && parsed.rawText.trim().length > 1) {
+            const spk = parsed.speaker === "EN" ? "EN" : "KO";
+            const rawClean = parsed.rawText.trim();
+            const hits = detectGlossaryHits(rawClean);
+            const alerts = detectEvidenceAlerts(rawClean);
+            const entry = {
+              id: "utt_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+              time: new Date().toTimeString().slice(0, 8),
+              speaker: spk,
+              rawText: rawClean,
+              polishedScript: parsed.polishedScript || rawClean,
+              conciseGist: parsed.conciseGist || parsed.polishedScript || rawClean,
+              sourceLabel: "녹음 동시 AI 음성인식·통역 (Gemini Audio)",
+              glossaryHits: hits,
+              evidenceAlerts: alerts,
+              bookmarked: false
+            };
+            state.utterancesBySession[state.activeSessionId].push(entry);
+            state.currentCopilot = entry;
+            renderTranscriptFeed(true);
+            renderCopilotPanel();
+            updateVaultBadge();
+            saveAppState();
+          }
+        }
+      } catch (e) {
+      } finally {
+        vadInFlightCount = Math.max(0, vadInFlightCount - 1);
+        if (vadInFlightCount === 0 && state.isRecording && hasGeminiKey()) {
+          document.getElementById("interimTextDisplay").textContent = "음성 대기/수신 중 (말씀이 끝나거나 6초마다 자동 대본화됩니다)...";
+        }
+      }
+    }
+
+    function startNewVadChunkSegment(chosenMime) {
+      if (!audioStream || !state.isRecording || state.isPausedRecording || !hasGeminiKey()) return;
+      try {
+        vadChunks = [];
+        vadChunkRecorder = chosenMime
+          ? new MediaRecorder(audioStream, { mimeType: chosenMime })
+          : new MediaRecorder(audioStream);
+
+        vadChunkRecorder.ondataavailable = (ev) => {
+          if (ev.data && ev.data.size > 0) vadChunks.push(ev.data);
+        };
+
+        vadChunkRecorder.onstop = () => {
+          const hadSpeech = vadHasSpeech;
+          const mType = vadChunkRecorder ? (vadChunkRecorder.mimeType || "audio/webm") : "audio/webm";
+          const segBlob = new Blob(vadChunks, { type: mType });
+          vadChunks = [];
+          if (hadSpeech && segBlob.size > 1800) {
+            transcribeAndInterpretAudioChunk(segBlob, mType);
+          }
+          // Immediately chain next VAD segment while recording continues
+          if (state.isRecording && !state.isPausedRecording && audioStream && hasGeminiKey()) {
+            startNewVadChunkSegment(chosenMime);
+          }
+        };
+
+        vadSegmentStartMs = Date.now();
+        vadHasSpeech = false;
+        vadChunkRecorder.start();
+      } catch (e) {}
+    }
+
+    function startVadMonitor(chosenMime) {
+      if (vadWatchIntervalId) clearInterval(vadWatchIntervalId);
+      startNewVadChunkSegment(chosenMime);
+
+      vadWatchIntervalId = setInterval(() => {
+        if (!state.isRecording || state.isPausedRecording || !hasGeminiKey()) return;
+        if (!vadChunkRecorder || vadChunkRecorder.state !== "recording") return;
+
+        const now = Date.now();
+        const segAge = now - vadSegmentStartMs;
+        const silenceSinceVoice = now - vadLastVoiceMs;
+
+        // Cut chunk cleanly when speaker pauses >= 1.0s after speaking (min 1.8s clip),
+        // OR every 6.5s of continuous speech so captions never lag behind,
+        // OR reset silent buffer every 12s to prevent dead air accumulation.
+        if (
+          (vadHasSpeech && segAge >= 1800 && silenceSinceVoice >= 1000) ||
+          (vadHasSpeech && segAge >= 6500) ||
+          (!vadHasSpeech && segAge >= 12000)
+        ) {
+          try { vadChunkRecorder.stop(); } catch (e) {}
+        }
+      }, 220);
     }
 
     async function toggleMeetingRecording() {
@@ -1097,7 +1299,25 @@
 
         startMeterLoop(audioStream);
         updateRecorderUI();
-        showToast(`[${sessionSnapshot.titleKo}] 미팅 녹음을 시작했습니다.`);
+
+        // SIMULTANEOUS TRANSCRIPTION ACTIVATION:
+        if (hasGeminiKey()) {
+          // Stop browser WebSpeech so it never fights over the mic, and run unified Gemini Live Audio VAD!
+          stopSpeechRecognition();
+          document.getElementById("interimBanner").classList.remove("hidden");
+          document.getElementById("interimSpeakerLabel").textContent = "통합 녹음 + AI 한/영 자동 대본 켜짐 (Gemini Audio)";
+          document.getElementById("interimTextDisplay").textContent = "음성 수신 중... 말씀하시면 한국어/영어를 자동 구분해 대본과 통역문을 띄웁니다.";
+          document.getElementById("sttNoticeText").textContent = "녹음 + AI 자동 대본 동시 작동 중";
+          startVadMonitor(chosenMime);
+          showToast(`[${sessionSnapshot.titleKo}] 녹음 + AI 실시간 자동 대본·통역이 함께 시작되었습니다!`);
+        } else {
+          // No Gemini key yet -> Auto-start WebSpeech STT alongside recording (works on desktop Chrome; detects conflict on mobile)
+          const targetLang = state.listeningLang || "KO";
+          if (!recognition) {
+            startSpeechRecognition(targetLang);
+          }
+          showToast(`[${sessionSnapshot.titleKo}] 녹음과 실시간 음성인식을 함께 시작했습니다.`);
+        }
       } catch (err) {
         showToast("마이크 접근이 거부되었거나 사용할 수 없습니다. 브라우저 마이크 권한을 확인해 주세요.");
       }
@@ -1109,10 +1329,16 @@
         if (mediaRecorder.state === "recording") {
           mediaRecorder.pause();
           state.isPausedRecording = true;
+          if (vadChunkRecorder && vadChunkRecorder.state === "recording") {
+            try { vadChunkRecorder.stop(); } catch (e) {}
+          }
           showToast("녹음 일시정지됨");
         } else if (mediaRecorder.state === "paused") {
           mediaRecorder.resume();
           state.isPausedRecording = false;
+          if (hasGeminiKey()) {
+            startNewVadChunkSegment(mediaRecorder.mimeType || "");
+          }
           showToast("녹음 재개됨");
         }
         updateRecorderUI();
@@ -1126,6 +1352,10 @@
       }
       state.isRecording = false;
       state.isPausedRecording = false;
+      if (vadChunkRecorder && vadChunkRecorder.state !== "inactive") {
+        try { vadChunkRecorder.onstop = null; vadChunkRecorder.stop(); } catch (e) {}
+      }
+      vadChunkRecorder = null;
       stopMeterLoop();
       if (mediaRecorder && mediaRecorder.state !== "inactive") {
         try { mediaRecorder.stop(); } catch (e) {}
@@ -1134,6 +1364,8 @@
         audioStream.getTracks().forEach(t => t.stop());
         audioStream = null;
       }
+      document.getElementById("interimBanner").classList.add("hidden");
+      document.getElementById("sttNoticeText").textContent = "녹음 종료됨";
       updateRecorderUI();
     }
 
@@ -1840,7 +2072,6 @@
         }
       });
 
-      // Auto-restore if already unlocked in this tab session
       try {
         const savedHex = sessionStorage.getItem(SESSION_TOKEN_KEY);
         if (savedHex && savedHex.length === 64) {
